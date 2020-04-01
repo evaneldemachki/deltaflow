@@ -2,7 +2,7 @@ import os
 import json
 import pandas
 from collections import OrderedDict
-from deltaflow.errors import *
+from deltaflow.errors import NameLookupError, IdLookupError
 from deltaflow.hash import hash_node
 
 class NodeLink:
@@ -169,7 +169,7 @@ class Tree:
             if self.origins[key] == origin_id:
                 name = key
         if name is None:
-            raise OriginNotFoundError
+            raise KeyError('origin not found')
 
         return name
 
@@ -177,7 +177,7 @@ class Tree:
     def node(self, node_id: str) -> NodeInfo:
         path = os.path.join(self.path, 'nodes', node_id)
         if not os.path.isfile(path):
-            raise NodeNotFoundError(node_id)
+            raise IdLookupError(node_id)
 
         with open(path, 'r') as f:
             node_str = f.read()
@@ -196,7 +196,7 @@ class Tree:
             with open(path, 'r') as f:
                 pointer = f.readline()
         except FileNotFoundError:
-            raise ArrowNameError(name)
+            raise NameLookupError('arrow', name)
         
         return pointer
     
@@ -209,7 +209,7 @@ class Tree:
             with open(node_path, 'r') as f:
                 node_str = f.read()
         except FileNotFoundError:
-            raise NodeNotFoundError(node_id)
+            raise IdLookupError(node_id)
 
         parent = json.loads(node_str)['parent']
         timeline.append((node_id, hash_node(node_str)))
@@ -220,7 +220,7 @@ class Tree:
                 with open(node_path, 'r') as f:
                     node_str = f.read()
             except FileNotFoundError:
-                raise NodeNotFoundError(node_id)
+                raise IdLookupError(node_id)
 
             parent = json.loads(node_str)['parent']
             timeline.append((node_id, hash_node(node_str)))
