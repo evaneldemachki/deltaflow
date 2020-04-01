@@ -103,6 +103,8 @@ class Arrow:
         layer = Layer()
         queue = layer.push(self.data.stage, op.Update(x, y))
         self.stack.add(layer)
+
+        return self.proxy()
   
     def drop(self, indexer: DataFrameIndexer, axis: int = 0) -> pandas.DataFrame:
         if axis == 0: # drop rows (default)
@@ -250,6 +252,7 @@ class Arrow:
             f.write(node_id)
         
         self.head = self._tree.node(node_id)
+        print(self)
 
     def _resolve_timeline(self) -> pandas.DataFrame:
         path = self._tree.path
