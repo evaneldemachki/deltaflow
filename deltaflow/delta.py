@@ -51,7 +51,7 @@ class DeltaBase:
         ix = self.cmapix(cols_x)
         cols_x, cols_y = cols_x[ix], cols_y[ix]
 
-        indexer = self.data.columns.get_indexer[cols_x]
+        indexer = self.data.columns.get_indexer(cols_x)
         basecolumns = self.data.columns.to_numpy()
         numpy.put(basecolumns, indexer, cols_y)
 
@@ -87,7 +87,7 @@ class DeltaBase:
     
     # Return indexer of row indices that are in data
     def imapix(self, index: PandasRowIndex) -> numpy.array:
-        indexer = self.data.index.get_indexer[index]
+        indexer = self.data.index.get_indexer(index)
         ix = numpy.where(indexer!=-1)
 
         return ix
@@ -101,7 +101,7 @@ class DeltaBase:
 
     # Return row indices that are in data
     def imap(self, index: PandasRowIndex) -> pandas.Int64Index:
-        indexer = self.data.index.get_indexer[index]
+        indexer = self.data.index.get_indexer(index)
         indexer = numpy.delete(indexer, numpy.where(indexer==-1))
 
         indexmap = self.data.index[indexer]
