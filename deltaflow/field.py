@@ -12,7 +12,7 @@ from deltaflow.arrow import Arrow
 from deltaflow.node import OriginNode
 
 # Initialize a field directory in given path
-def touch(path: str) -> None:
+def touch(path: str = os.getcwd()) -> None:
     core_path = os.path.join(path, '.deltaflow')
     os.mkdir(core_path)
 
