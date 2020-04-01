@@ -10,7 +10,7 @@ setuptools.setup(
     description="Efficient storage and version control for pandas dataframes",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    install_requires = [
+    install_requires=[
         'certifi==2019.11.28',
         'chardet==3.0.4',
         'dnspython==1.16.0',
@@ -28,7 +28,7 @@ setuptools.setup(
         'six==1.14.0',
         'thrift==0.13.0',
         'urllib3==1.25.8'
-    ]
+    ],
     packages=setuptools.find_packages(),
     python_requires='>=3.6'
 )
