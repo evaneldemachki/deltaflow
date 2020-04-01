@@ -82,6 +82,7 @@ class Arrow:
 
     def undo(self):
         self.data.stage = self.stack.revert(self.data.stage)
+        return self.proxy()
 
     # update records in a segment of current stage dataset with
     # ... corresponding proxy records of matching indices
