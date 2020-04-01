@@ -6,7 +6,7 @@ def column_index(obj):
         cols = pandas.Index([obj.name])
     elif isinstance(obj, pandas.DataFrame):
         cols = pandas.Index(obj.columns)
-    else: raise PHError
+    else: raise TypeError
 
     return cols
 

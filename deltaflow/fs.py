@@ -4,7 +4,7 @@ import struct
 import pandas
 from typing import Tuple, List, TypeVar, IO, BinaryIO
 import fastparquet
-from deltaflow.errors import *
+from deltaflow.errors import NameExistsError
 from deltaflow.delta import block_order
 
 OrderedDict = TypeVar('OrderedDict')
@@ -145,7 +145,7 @@ def iter_delta(path: str, node_id: str) -> Tuple[str, Block]:
 def write_origin(path: str, name: str, data: pandas.DataFrame):
     origin_path = os.path.join(path, name + '.origin')
     if os.path.isfile(origin_path):
-        raise OriginFileNameError(name)
+        raise NameExistsError('origin', name)
     
     fastparquet.write(origin_path, data)
 

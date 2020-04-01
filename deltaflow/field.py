@@ -3,7 +3,8 @@ import pandas
 import json
 import hashlib
 from datetime import datetime
-from deltaflow.errors import *
+from deltaflow.errors import (FieldPathError, NameExistsError, 
+    InformationError, IdLookupError)
 from deltaflow import fs
 from deltaflow.hash import hash_data, hash_node
 from deltaflow.tree import Tree
@@ -47,10 +48,10 @@ class Field:
 
         origins = self.tree.origins.to_dict()
         if name in origins:
-            raise OriginNameExistsError(name)
+            raise NameExistsError('origin', name)
         for key in origins:
             if origins[key] == node_id:
-                raise IdenticalOriginError(key)
+                raise InformationError(key)
         
         fs.write_origin(self.path, name, data)
 
@@ -64,10 +65,10 @@ class Field:
 
     def add_arrow(self, node_id: str, name: str) -> None:
         if name in self.tree.arrows:
-            raise ArrowNameExistsError(name)
+            raise NameExistsError('arrow', name)
 
         if node_id not in self.tree.nodes:
-            raise NodeNotFoundError(node_id)
+            raise IdLookupError(node_id)
 
         arrow_path = os.path.join(self.tree.path, 'arrows', name)
         with open(arrow_path, 'w') as f:

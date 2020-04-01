@@ -2,122 +2,119 @@ class Error(Exception):
     def __str__(self):
         return self.msg
 
+strf_axis = {
+    0: {
+        'name': 'row',
+        'base_types': ('pandas.DataFrame',),
+        'indexer_types': (
+            'pandas.Int64Index', 
+            'pandas.RangeIndex',
+            'list', 'tuple', 'int')
+    },
+    1: {
+        'name': 'column',
+        'base_types': ('pandas.DataFrame', 'pandas.Series'),
+        'indexer_types': (
+            'pandas.Index', 'list',
+            'tuple', 'str')
+    }
+}
+
+class IndexerError(Error):
+    """raised on invalid row/column indexer type"""
+    msg = "invalid {0} indexer: expected type(s) '{1}', got '{2}'"
+    def __init__(self, axis, indexer):
+        self.msg = self.msg.format(
+            strf_axis[axis]['name'], 
+            strf_axis[axis]['indexer_types'],
+            type(indexer)
+        )
+
+class IntersectionError(Error):
+    """called when empty or non-intersecting indexer is passed"""
+    msg = "{0} indexer does not intersect with stage"
+    def __init__(self, axis):
+        self.msg = self.msg.format(strf_axis[axis])
+        
+class ExtensionError(Error):
+    """raised when extension indices do not match stage"""
+    msg = "{0} of {1} extension must must match stage"
+    strf = {
+        0: ('columns', 'row'),
+        1: ('rows', 'columns')
+    }
+    def __init__(self, axis):
+        self.msg = self.msg.format(*self.strf[axis])
+
+class IntegrityError(Error):
+    """raised when delta-node/origin-node hash pair does not match node ID"""
+    msg = "{0}.{1} is corrupted or has been modified outside of DeltaFlow"
+    def __init__(self, key, obj_type):
+        self.msg = self.msg.format(key, obj_type)
+
+class SetIndexError(Error):
+    """raised on attempt to set index of incorrect length"""
+    msg = "expected index of length '{0}', got '{1}'"
+    def __init__(self, index_x, index_y):
+        self.msg = self.msg.format(len(index_x), len(index_y))
+
+class InsertionError(Error):
+    """raised on attempt to insert columns of incorrect length"""
+    msg = "expected data of length '{0}', got '{1}'"
+    def __init__(self, index_x, index_y):
+        self.msg = self.msg.format(len(index_x), len(index_y))
+
 class FieldPathError(Error):
-    msg = "path '{0}' does not contain field"
+    """raised when '.deltaflow' directory not in path"""
+    msg = "path '{0}' is not a DeltaFlow field directory"
     def __init__(self, path):
-        self.msg = FieldPathError.msg.format(path)
+        self.msg = self.msg.format(path)
 
-class OriginNameExistsError(Error):
-    msg = "origin with name '{0}' already exists"
-    def __init__(self, name):
-        self.msg = OriginNameExistsError.msg.format(name)
+class NameExistsError(Error):
+    msg = "{0} with name '{1}' already exists"
+    def __init__(self, obj, name):
+        self.msg = self.msg.format(obj, name)
 
-class OriginNotFoundError(Error):
-    msg = "origin with name '{0}' not found"
-    def __init__(self, name):
-        self.msg = OriginNotFoundError.msg.format(name)
+class NameLookupError(Error):
+    """raised when arrow/origin name not found in field"""
+    msg = "{0} '{1}' not found in field"
+    def __init__(self, obj, name):
+        self.msg = self.msg.format(obj, name)
 
-class IdenticalOriginError(Error):
-    msg = "attempting to add duplicate origin"
-    def __init__(self):
-        self.msg = IdenticalOriginError.msg
+class InformationError(Error):
+    """raised when origin/delta result in existing node ID"""
+    msg = "{0} is identical to existing delta '{1}'"
+    def __init__(self, obj, obj_hash):
+        self.msg = self.msg.format(obj, obj_hash)
 
-class NodeNotFoundError(Error):
+class IdLookupError(Error):
+    """raised when node ID not found in field"""
     msg = "node with ID '{0}' not found"
     def __init__(self, node_id):
-        self.msg = NodeNotFoundError.msg.format(node_id)
-
-class InvalidRowIndexerError(Error):
-    msg = "object of type '{0}' is not a valid row indexer"
-    def __init__(self, objtype):
-        self.msg = InvalidRowIndexerError.msg.format(objtype)
-
-class InvalidColumnIndexerError(Error):
-    msg = "object of type '{0}' is not a valid column indexer"
-    def __init__(self, objtype):
-        self.msg = InvalidColumnIndexerError.msg.format(objtype)
+        self.msg = self.msg.format(node_id)
     
-class NullIndexerError(Error):
-    msg = "empty or non-intersecting indexer"
+class ObjectTypeError(Error):
+    """raised when pandas DataFrame or Series is expected"""
+    msg = "invalid pandas object: expected type(s) '{0}', got '{1}'"
+    def __init__(self, obj, axis=0):
+        self.msg = self.msg.format(
+            strf_axis[axis]['base_types'], type(obj))
+
+class AxisLabelError(Error):
+    """raised when column extension object with no axis labels is passed"""
+    msg = "column extension requires axis label(s)"
     def __init__(self):
-        self.msg = NullIndexerError.msg
+        self.msg = self.msg
 
-class InvalidPandasObjectError(Error):
-    msg = "expected DataFrame or Series, got '{0}'"
-    def __init__(self, objtype):
-        self.msg = InvalidPandasObjectError.msg.format(objtype)
+class AxisOverlapError(Error):
+    """raised when column extension contains existing labels"""
+    msg = "column extension contains existing labels"
+    def __init__(self ):
+        self.msg = self.msg
 
-class UnnamedSeriesError(Error):
-    msg = "cannot add unnamed Series as column"
+class UndoError(Error):
+    """raised when undo is called with empty stack"""
+    msg = "nothing to undo"
     def __init__(self):
-        self.msg = UnnamedSeriesError.msg
+        self.msg = self.msg
 
-class SeriesNameError(Error):
-    msg = "Series name '{0}' is already a column name"
-    def __init__(self, name):
-        self.msg = SeriesNameError.msg.format(name)
-
-class SeriesLengthError(Error):
-    msg = "Series length does not match stage data"
-    def __init__(self):
-        self.msg = SeriesLengthError.msg
-
-class ExtensionIndexError(Error):
-    msg = "extension must contain new row and/or column indices"
-    def __init__(self):
-        self.msg = ExtensionIndexError.msg
-
-class RowExtensionError(Error):
-    msg = "row extension block must contain all stage columns"
-    def __init__(self):
-        self.msg = RowExtensionError.msg
-
-class ColExtensionError(Error):
-    msg = "col extension block must contain all stage rows"
-    def __init__(self):
-        self.msg = ColExtensionError.msg
-    
-class TakeIndexError(Error):
-    msg = "expected object of length '{0}', got '{1}'"
-    def __init__(self, l1, l2):
-        self.msg = TakeIndexError.msg.format(l1, l2)
-    
-class EmptyStackError(Error):
-    msg = "Stack is empty"
-    def __init__(self):
-        self.msg = EmptyStackError.msg
-
-class OriginIntegrityError(Error):
-    msg = "origin has been modified outside of deltaflow"
-    def __init__(self):
-        self.msg = OriginIntegrityError.msg
-
-class InvalidBlockError(Error):
-    msg = "block key '{0}' not recognized"
-    def __init__(self, key):
-        self.msg = InvalidBlockError.msg.format(key)
-
-class DeltaIntegrityError(Error):
-    msg = "delta has been modified outside of deltaflow"
-    def __init__(self):
-        self.msg = DeltaIntegrityError.msg
-
-class OriginFileNameError(Error):
-    msg = "file '{0}' already exists in field directory"
-    def __init__(self, name):
-        self.msg = OriginFileNameError.msg.format(name)
-
-class ArrowNameExistsError(Error):
-    msg = "arrow with name '{0}' already exists"
-    def __init__(self, name):
-        self.msg = ArrowNameExistsError.msg.format(name)
-
-class ArrowPointerError(Error):
-    msg = "'{0}' is not a valid arrow pointer"
-    def __init__(self, pointer):
-        self.msg = ArrowPointerError.msg.format(pointer)
-
-class ArrowNameError(Error):
-    msg = "arrow with name '{0}' does not exist"
-    def __init__(self, name):
-        self.msg = ArrowNameError.msg.format(name)

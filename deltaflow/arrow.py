@@ -2,7 +2,11 @@ import os
 import pandas
 from collections import OrderedDict
 from typing import TypeVar, Union, Iterable, Any, Tuple
-from deltaflow.errors import *
+from deltaflow.errors import (
+    UndoError, IndexerError, IntegrityError, 
+    AxisLabelError, InsertionError, 
+    ExtensionError, ObjectTypeError
+)
 from deltaflow import fs
 from deltaflow.hash import hash_data, hash_pair, hash_node
 from deltaflow.delta import Delta, block_function
@@ -46,7 +50,7 @@ class Stack:
             
             self.layers.pop()
         except IndexError:
-            raise EmptyStackError
+            raise UndoError
 
         return data
     
@@ -109,17 +113,19 @@ class Arrow:
                     ix = pandas.Int64Index(indexer).intersection(
                         self.data.stage.index)
                 except:
-                    raise InvalidRowIndexerError(type(indexer))
+                    raise IndexerError(axis, indexer)
             else:
-                raise InvalidRowIndexerError(type(indexer))
+                raise IndexerError(axis, indexer)
                 
             if len(ix) == 0:
-                raise NullIndexerError
+                return self.proxy()
 
             layer = Layer()
             oper = op.DropRows(self.data.stage.loc[ix], self.data.stage.index)
             self.data.stage = layer.push(self.data.stage, oper)
             self.stack.add(layer)
+
+            return self.proxy()
 
         elif axis == 1: # drop columns
             if type(indexer) == pandas.DataFrame:
@@ -132,15 +138,15 @@ class Arrow:
                     ix = pandas.Index(indexer).intersection(
                         self.data.stage.index)
                 except:
-                    raise InvalidColumnIndexerError(type(indexer))
+                    raise IndexerError(axis, indexer)
             elif type(indexer) == str:
                 ix = pandas.Index([indexer]).intersection(
                     self.data.stage.columns)
             else:
-                raise InvalidColumnIndexerError(type(indexer))
+                raise IndexerError(axis, indexer)
             
             if len(ix) == 0:
-                raise NullIndexerError
+                return self.proxy()
 
             layer = Layer()
             oper = op.DropColumns(self.data.stage.loc[:,ix], self.data.stage.columns)
@@ -152,12 +158,12 @@ class Arrow:
     def _ext_cols(self, data: PandasObject) -> Operation:
         if type(data) is pandas.Series:
             if data.name is None:
-                raise UnnamedSeriesError
+                raise AxisLabelError
             ext_rows = self.data.stage.index.difference(
                 data.index)
             ext_data = data[ext_rows]
             if len(ext_data) != len(self.data.stage):
-                raise SeriesLengthError
+                raise InsertionError(self.data.stage, ext_data)
 
             oper = op.AddColumns(pandas.DataFrame(ext_data))
             return oper
@@ -167,7 +173,7 @@ class Arrow:
         # data & stage columns must be equal
         if (len(data.columns.intersection(
             self.data.stage.columns)) != len(self.data.stage.columns)):
-            raise RowExtensionError
+            raise ExtensionError(0)
 
         ext_data = data.loc[ext_rows, self.data.stage.columns]
         oper = op.AddRows(ext_data)
@@ -195,7 +201,7 @@ class Arrow:
             ext_rows = data.index.difference(
                 self.data.stage.index)
             if len(ext_cols) == len(ext_rows) == 0:
-                raise ExtensionError
+                return self.proxy()
             elif len(ext_cols) == 0 and len(ext_rows) != 0: # extend only rows
                 oper = self._ext_rows(data)
                 layer = Layer()
@@ -208,15 +214,15 @@ class Arrow:
                 self.data.stage = layer.push(queue, col_oper)
                 self.stack.add(layer)
             else:
-                raise ColExtensionError
+                raise ExtensionError(1)
         else:
-            raise InvalidPandasObjectError(type(data))
+            raise ObjectTypeError(data)
 
         return self.proxy()
     
-    def take_index(self, data: Union[PandasObject, RowIndex]) -> pandas.DataFrame:
+    def set_index(self, data: Union[PandasObject, RowIndex]) -> pandas.DataFrame:
         if data.shape[0] != self.data.stage.shape[0]:
-            raise TakeIndexError(self.data.stage.shape[0], data.shape[0])
+            raise SetIndexError(self.data.stage.shape[0], data.shape[0])
         layer = Layer()
         oper = op.Reindex(self.data.stage.index, data.index)
         self.data.stage = layer.push(self.data.stage, oper)
@@ -253,20 +259,18 @@ class Arrow:
         # load origin data and verify hash == origin_hash
         data = fs.load_origin(self._tree.path, origin_name)
         if hash_data(data) != origin_hash:
-            raise OriginIntegrityError
+            raise IntegrityError(origin_name, 'origin')
         # apply deltas in timeline (excluding origin node)
         for node_id in list(self._timeline)[1:]:
             node_hash = self._timeline[node_id]
             for key, block in fs.iter_delta(path, node_id):
                 if key in block_function:
                     data = block_function[key](data, block)
-                else:
-                    raise InvalidBlockError(key)
             
             # assure reconstructed node_id matches true node_id
             data_hash = hash_data(data)
             if hash_pair(node_hash, data_hash) != node_id:
-                raise DeltaIntegrityError
+                raise IntegrityError(node_id, 'delta')
 
         return data
     
