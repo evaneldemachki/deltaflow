@@ -27,6 +27,8 @@ def translate_make(make: OrderedDict) -> list:
     for key in make:
         if make[key] is not False and key in transmap:
             entry.append(transmap[key](make[key]))
+        
+    return entry
     
 class Node(OrderedDict):
     def __init__(self, origin_hash: str, parent_id: Union[str, None], make: OrderedDict):
