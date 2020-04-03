@@ -46,7 +46,7 @@ class Field:
         origin_node_str = OriginNode(origin_hash, data).to_json()
         node_id = hash_node(origin_node_str)
 
-        origins = self.tree.origins.to_dict()
+        origins = self.tree.origins
         if name in origins:
             raise NameExistsError('origin', name)
         for key in origins:

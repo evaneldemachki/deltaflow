@@ -75,12 +75,6 @@ class TreeIndex:
 
     def __getitem__(self, key):
         return self._items[key]
-    
-    def __getattr__(self, key):
-        if key in self._items:
-            return self._items[key]
-        else:
-            raise AttributeError
 
     def __setattr__(self, key, val):
         if key in OriginsInfo.private:
@@ -117,6 +111,12 @@ class OriginsIndex(TreeIndex):
 class ArrowsIndex(TreeIndex):
     def __init__(self, arrows):
         self.__dict__['_items'] = arrows
+
+    def __getattr__(self, key):
+        if key in self._items:
+            return self._items[key]
+        else:
+            raise AttributeError
 
     def __str__(self):
         out = 'ARROWS: {\n'
@@ -232,44 +232,32 @@ class Tree:
         raise AttributeError
 
     def __str__(self):
-        node_links = {}
-        rev = {}
         origins = self.origins
-        for name in origins:
-            origin_id = origins[name]
-            node_links[origin_id] = []
-            rev[origin_id] = name
-        
-        arrows = self.arrows
-        for name in arrows:
-            history = []
-            node_id = arrows[name]
-            node = None
-            while node_id is not None:
-                history.append(node_id)
-                path = os.path.join(self.path, 'nodes', node_id)
-                with open(path, 'r') as f:
-                    node = json.load(f)
-                    node_id = node['parent']
+        origin_map = {node_id: name for name, node_id in origins._items.items()}
+        node_links = {name: NodeLink(name) for name in origins}
 
-            node_links[history[-1]].append(history)
-        
-        node_tree = []
-        for origin_id in node_links:
-            origin_obj = NodeLink(origin_id)
-            for hist in node_links[origin_id]:
-                obj = origin_obj
-                for node_id in reversed(history[1:]):
-                    obj = obj.add_child(node_id)
+        nodes = self.nodes
+        for items in self.arrows._items.items():
+            node_id = items[1]
+            timeline = []
+            parent = node_id
+            while parent is not None:
+                timeline.append(parent)
+                parent = nodes[parent]
+                    
+            origin_name = origin_map[timeline.pop(-1)]
+            timeline = reversed(timeline)
+            
+            node = node_links[origin_name]
+            for child in timeline:
+                node = node.add_child(child)
 
-            node_tree.append(origin_obj)
-        
         out = ''
-        for obj in node_tree:
-            out += expand_tree(obj)
-        
+        for k in node_links:
+            out += expand_tree(node_links[k]) + '\n'
+
         return out[:-1]
-    
+
     __repr__ = __str__
 
 def expand_tree(node, _prefix="", _last=True):
