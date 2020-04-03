@@ -10,10 +10,29 @@ Arrow = TypeVar('Arrow')
 Stack = TypeVar('Stack')
 
 def encapsulate(data):
-    return pandas.DataFrame(data, columns=['ref'])
+    name = '' if data.name is None else data.name
+    obj_type = str(type(data))[8:-2].split('.')[-1]   
+    meta = '.'.join([name, obj_type])
+
+    return pandas.DataFrame(data.to_numpy(), columns=[meta])
 
 def unwrap(data):
-    return data['ref'].to_numpy()
+    meta = data.columns[0]
+    meta_split = meta.split('.')
+    dtfs = meta_split.pop(-1)
+    name = '.'.join(meta_split)
+
+    obj = getattr(pandas, dtfs)
+    if name == '':
+        if dtfs == 'RangeIndex':
+            return obj(data[meta].min(), data[meta].max() + 1)
+        else:
+            return obj(data[meta].to_numpy())
+    else:
+        if dtfs == 'RangeIndex':
+            return obj(data[meta].min(), data[meta].max() + 1, name=name) 
+        else:
+            return obj(data[meta].to_numpy(), name=name)
 
 block_order = (
     'drop_rows', 'drop_cols', 'reindex', 
@@ -133,15 +152,20 @@ class Delta:
         base = self.base
         ext = self.extension
         scheme = {
-            'drop_rows': encapsulate(base.dropped_rows) if len(base.dropped_rows) > 0 else False,
-            'drop_cols': encapsulate(base.dropped_cols) if len(base.dropped_cols) > 0 else False,
+            'drop_rows': encapsulate(base.dropped_rows) if (
+                len(base.dropped_rows) > 0) else False,
+            'drop_cols': encapsulate(base.dropped_cols) if (
+                len(base.dropped_cols) > 0) else False,
             'reindex': encapsulate(base.data.index) if (
                 list(base.data.index) != list(base.base.index)) else False, 
             'rename': encapsulate(base.data.columns) if (
                 list(base.data.columns) != list(base.base.columns)) else False,
-            'put_data': base.put_data if base.put_data is not None else False,
-            'ext_cols': ext.col_block if ext.col_block is not None else False,
-            'ext_rows': ext.row_block if ext.row_block is not None else False,
+            'put_data': base.put_data if (
+                base.put_data is not None) else False,
+            'ext_cols': ext.col_block if (
+                ext.col_block is not None) else False,
+            'ext_rows': ext.row_block if (
+                ext.row_block is not None) else False,
             'index': encapsulate(self.index), 
             'columns': encapsulate(self.columns)
         }

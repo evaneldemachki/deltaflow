@@ -272,10 +272,10 @@ def expand_tree(node, _prefix="", _last=True):
     return out
 
 def display_make(make: list, depth: int = 1) -> str:
-    out = '['
+    out = '[\n'
     just = ' ' * (depth * 2)
     for entry in make:
-        out.append("{0}{1}\n".format(just, entry))
+        out += "{0}{1}\n".format(just, entry)
     
     out += ' ' * ((2 * depth) - 2) + ']'
     return out
