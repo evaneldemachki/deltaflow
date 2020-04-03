@@ -5,12 +5,12 @@ from typing import TypeVar, Union, Iterable, Any, Tuple
 from deltaflow.errors import (
     UndoError, IndexerError, IntegrityError, 
     AxisLabelError, InsertionError, 
-    ExtensionError, ObjectTypeError
+    ExtensionError, ObjectTypeError,
+    AxisOverlapError
 )
 from deltaflow import fs
 from deltaflow.hash import hash_data, hash_pair, hash_node
 from deltaflow.delta import Delta, block_function
-from deltaflow.general import column_index, shrink
 from deltaflow.node import Node
 import deltaflow.operation as op
 
@@ -88,7 +88,7 @@ class Arrow:
     # ... corresponding proxy records of matching indices
     def update(self, data: PandasObject):
         # determine matching column names
-        update_cols = column_index(self.data.stage).intersection(column_index(data))
+        update_cols = op.column_index(self.data.stage).intersection(op.column_index(data))
         # determine matching row indices
         data_index = pandas.Int64Index(data.index)
         stage_index = pandas.Int64Index(self.data.stage.index)
@@ -99,8 +99,8 @@ class Arrow:
         data = pandas.DataFrame(
             data.loc[update_rows, update_cols])
         # shrink modifications
-        x = shrink(data, stage)
-        y = shrink(stage, data)
+        x = op.shrink(data, stage)
+        y = op.shrink(stage, data)
         layer = Layer()
         queue = layer.push(self.data.stage, op.Update(x, y))
         self.stack.add(layer)
@@ -162,13 +162,22 @@ class Arrow:
         if type(data) is pandas.Series:
             if data.name is None:
                 raise AxisLabelError
-            ext_rows = self.data.stage.index.difference(
-                data.index)
-            ext_data = data[ext_rows]
+
+            ext_rows = self.data.stage.index.intersection(data.index)
+            ext_data = data.loc[ext_rows]
             if len(ext_data) != len(self.data.stage):
                 raise InsertionError(self.data.stage, ext_data)
 
             oper = op.AddColumns(pandas.DataFrame(ext_data))
+            return oper
+        elif type(data) is pandas.DataFrame:
+            ext_cols = data.columns.difference(self.data.stage.columns)
+            ext_rows = self.data.stage.index.intersection(data.index)
+            ext_data = data.loc[ext_rows, ext_cols]
+            if ext_data.shape[0] != self.data.stage.shape[0]:
+                raise InsertionError(self.data.stage, ext_data)
+
+            oper = op.AddColumns(ext_data)
             return oper
     
     def _ext_rows(self, data: pandas.DataFrame, 
@@ -191,7 +200,6 @@ class Arrow:
 
         return (row_oper, col_oper)
         
-
     def extend(self, data: PandasObject) -> pandas.DataFrame:
         if type(data) is pandas.Series: # extend only cols
             layer = Layer()
@@ -207,6 +215,11 @@ class Arrow:
                 return self.proxy()
             elif len(ext_cols) == 0 and len(ext_rows) != 0: # extend only rows
                 oper = self._ext_rows(data)
+                layer = Layer()
+                self.data.stage = layer.push(self.data.stage, oper)
+                self.stack.add(layer)
+            elif len(ext_cols) != 0 and len(ext_rows) == 0: # extend only cols
+                oper = self._ext_cols(data)
                 layer = Layer()
                 self.data.stage = layer.push(self.data.stage, oper)
                 self.stack.add(layer)

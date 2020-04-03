@@ -3,7 +3,6 @@ import numpy
 from typing import TypeVar, Union
 from collections import OrderedDict
 from deltaflow import operation as op
-from deltaflow.general import shrink
 from deltaflow.hash import hash_data
 
 PandasRowIndex = Union[pandas.Int64Index, pandas.RangeIndex]
@@ -28,9 +27,9 @@ block_function = {
     'rename': lambda data, block: data.set_axis(unwrap(block), axis=1),
     'put_data': lambda data, block: (
         lambda x,y: (x.update(y), x)[-1])(data.copy(), block),
-    'ext_cols': lambda data, block: pandas.concat(data, block, axis=1),
-    'ext_rows': lambda data, block: pandas.concat(data, block, axis=0),
-    'index': lambda data, block: data.set_index(unwrap(block)),
+    'ext_cols': lambda data, block: pandas.concat([data, block], axis=1),
+    'ext_rows': lambda data, block: pandas.concat([data, block], axis=0),
+    'index': lambda data, block: data.set_axis(unwrap(block), axis=0),
     'columns': lambda data, block: data.set_axis(unwrap(block), axis=1)
 }
 
@@ -170,16 +169,18 @@ class Delta:
         y = self.base.data
         x.index = y.index
         x.columns = y.columns
-        self.base.put_data = shrink(x, y)
+        shrink_base = op.shrink(x, y)
+        if not shrink_base.isna().all().all():
+            self.base.put_data = shrink_base
         # stage 3: calculate extension tri-block
         ext = self.extension
         ext_index = ext.data.index.difference(self.base.data.index)
         ext_cols = ext.data.columns.difference(self.base.data.columns)
 
         if len(ext_cols) != 0:
-            ext.col_block = ext.data[ext_cols, self.base.data.index]
+            ext.col_block = ext.data.loc[self.base.data.index, ext_cols]
         if len(ext_index) != 0:
-            ext.row_block = ext.data[self.base.data.columns, ext_index]
+            ext.row_block = ext.data.loc[ext_index, self.base.data.columns]
                 
 
 

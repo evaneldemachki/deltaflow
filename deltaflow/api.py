@@ -25,7 +25,7 @@ def touch(path: str = os.getcwd()) -> None:
     os.mkdir(os.path.join(core_path, 'nodes'))
 
 class Field:
-    private = ('path', 'tree')
+    immutable = ('path', 'tree')
     def __init__(self, path: str = os.getcwd()):
         core_path = os.path.join(path, '.deltaflow')
         if not os.path.isdir(core_path):
@@ -59,9 +59,14 @@ class Field:
         with open(path, 'w') as f:
             f.write(origin_node_str)
 
+        origins = origins.to_dict()
         origins[name] = node_id
         with open(os.path.join(self.tree.path, 'origins'), 'w') as f:
             json.dump(origins, f)
+        
+        arrow_path = os.path.join(self.tree.path, 'arrows', '.' + name)
+        with open(arrow_path, 'w') as f:
+            f.write(node_id)
 
     def add_arrow(self, node_id: str, name: str) -> None:
         if name in self.tree.arrows:
@@ -70,12 +75,15 @@ class Field:
         if node_id not in self.tree.nodes:
             raise IdLookupError(node_id)
 
+        if name[0] == '.':
+            raise NameError("'.' prefix is reserved for master arrows")
+
         arrow_path = os.path.join(self.tree.path, 'arrows', name)
         with open(arrow_path, 'w') as f:
             f.write(node_id)
 
     def __setattr__(self, key, val):
-        if key in Field.private:
+        if key in Field.immutable:
             raise AttributeError
         else:
             self.__dict__[key] = val

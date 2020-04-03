@@ -232,12 +232,12 @@ class Tree:
         raise AttributeError
 
     def __str__(self):
-        origins = self.origins
-        origin_map = {node_id: name for name, node_id in origins._items.items()}
-        node_links = {name: NodeLink(name) for name in origins}
+        origins = self.origins.to_dict()
+        origin_map = {node_id: name for name, node_id in origins.items()}
 
+        node_links = {name: NodeLink(origins[name]) for name in origins}
         nodes = self.nodes
-        for items in self.arrows._items.items():
+        for items in self.arrows.to_dict().items():
             node_id = items[1]
             timeline = []
             parent = node_id
@@ -253,8 +253,9 @@ class Tree:
                 node = node.add_child(child)
 
         out = ''
-        for k in node_links:
-            out += expand_tree(node_links[k]) + '\n'
+        for name in node_links:
+            out += name + '\n'
+            out += expand_tree(node_links[name]) + '\n'
 
         return out[:-1]
 

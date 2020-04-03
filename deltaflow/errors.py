@@ -109,7 +109,7 @@ class AxisLabelError(Error):
 class AxisOverlapError(Error):
     """raised when column extension contains existing labels"""
     msg = "column extension contains existing labels"
-    def __init__(self ):
+    def __init__(self):
         self.msg = self.msg
 
 class UndoError(Error):
