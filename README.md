@@ -12,4 +12,4 @@ pip install git+https://github.com/evaneldemachki/deltaflow.git
 ```
 This project is dependent on [fastparquet](https://fastparquet.readthedocs.io/en/latest/) which requires Visual C++ 2014 in order to build. Otherwise, pre-compiled fastparquet wheels can be found [here](https://www.lfd.uci.edu/~gohlke/pythonlibs/)
 ## Usage
-Basic example [here](https://github.com/evaneldemachki/deltaflow/blob/master/example.ipynb/)
+Basic example [here](https://github.com/evaneldemachki/deltaflow/blob/master/docs/example.ipynb/)
