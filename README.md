@@ -1,4 +1,4 @@
-![DeltaFlow Logo](https://repository-images.githubusercontent.com/250386104/6b619400-6fa7-11ea-9443-e2675c49a252)
+![DeltaFlow Logo](https://repository-images.githubusercontent.com/250386104/52d02a00-75f6-11ea-82e9-9f6ea27ea6a2)
 # DeltaFlow
 DeltaFlow is a Python library that brings decentralized version control to the Pandas DataFrame. 
 
