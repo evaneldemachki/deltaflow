@@ -1,0 +1,17 @@
+README.md
+setup.py
+deltaflow/__init__.py
+deltaflow/api.py
+deltaflow/arrow.py
+deltaflow/delta.py
+deltaflow/errors.py
+deltaflow/fs.py
+deltaflow/hash.py
+deltaflow/node.py
+deltaflow/operation.py
+deltaflow/tree.py
+deltaflow_evaneldemachki.egg-info/PKG-INFO
+deltaflow_evaneldemachki.egg-info/SOURCES.txt
+deltaflow_evaneldemachki.egg-info/dependency_links.txt
+deltaflow_evaneldemachki.egg-info/requires.txt
+deltaflow_evaneldemachki.egg-info/top_level.txt

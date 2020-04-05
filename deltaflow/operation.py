@@ -1,6 +1,21 @@
 import pandas
 import numpy
 
+oper_map = {
+    'drop_rows': lambda oper: "DROP {0} ROW(S)".format(
+        len(oper.rows)),
+    'drop_cols': lambda oper: "DROP {0} COLUMNS(S)".format(
+        len(oper.columns.columns)),
+    'reindex': lambda oper: "REPLACE ROW INDEX",
+    'rename': lambda oper: "RENAME {0} COLUMN(S)".format(
+        len(oper.cols_x.diff(oper.cols_y))),
+    'update': lambda oper: "UPDATE VALUES",
+    'add_rows': lambda oper: "EXTEND ROWS BY {0}".format(
+        len(oper.rows)),
+    'add_cols': lambda oper: "EXTEND COLUMNS BY {0}".format(
+        len(oper.columns.columns))
+}
+
 # return column index for pandas object
 def column_index(obj):
     if isinstance(obj, pandas.Series):
@@ -14,28 +29,36 @@ def column_index(obj):
 # return reduced dataframe of modified rows from x to y
 def shrink(x, y):
     diff = y[~y.isin(x)]
-    diff = diff[~diff.isna().all(axis=1)]
+    diff = diff.dropna(axis='columns', how='all')
+    diff = diff.dropna(axis='rows', how='all')
 
     return diff
 
 class Operation:
-    pass
+    def display(self):
+        return oper_map[self.tag](self)
 
 class Update(Operation):
-    def __init__(self, data_x, data_y):
+    tag = 'update'
+    def __init__(self, data_x, data_y, dtypes):
         self.data_x = data_x
         self.data_y = data_y
-    
+        self.dtypes = dtypes
+
     def execute(self, data:pandas.DataFrame) -> pandas.DataFrame:
         data.update(self.data_y)
+        data = data.astype(self.dtypes[self.data_y.columns])
         return data
     
     def undo(self, data:pandas.DataFrame) -> pandas.DataFrame:
         data.update(self.data_x)
+        data = data.astype(self.dtypes[self.data_x.columns])
+
         return data
 
 # Drop rows from dataframe
 class DropRows(Operation):
+    tag = 'drop_rows'
     def __init__(self, rows: pandas.DataFrame, ref: pandas.Int64Index):
         self.rows = rows
         self.ref = ref
@@ -43,6 +66,7 @@ class DropRows(Operation):
     def execute(self, data:pandas.DataFrame) -> pandas.DataFrame:
         data = data.drop(self.rows.index)
         return data
+    
     # *adds rows to original indices
     def undo(self, data:pandas.DataFrame) -> pandas.DataFrame:
         data = data.append(self.rows)
@@ -51,6 +75,7 @@ class DropRows(Operation):
 
 # Add rows to the end of dataframe
 class AddRows(Operation):
+    tag = 'add_rows'
     def __init__(self, rows: pandas.DataFrame):
         self.rows = rows
     
@@ -64,6 +89,7 @@ class AddRows(Operation):
 
 # Add column to the end of dataframe
 class AddColumns(Operation):
+    tag = 'add_cols'
     def __init__(self, columns: pandas.DataFrame):
         self.columns = columns
     
@@ -77,6 +103,7 @@ class AddColumns(Operation):
 
 # Drop columns from dataframe
 class DropColumns(Operation):
+    tag = 'drop_cols'
     def __init__(self, columns: pandas.DataFrame, ref: pandas.Index):
         self.columns = columns
         self.ref = ref
@@ -94,6 +121,7 @@ class DropColumns(Operation):
 
 # Set dataframe index to another index of equal length
 class Reindex(Operation):
+    tag = 'reindex'
     def __init__(self, index_x, index_y):
         self.index_x = index_x
         self.index_y = index_y
@@ -107,6 +135,7 @@ class Reindex(Operation):
         return data
 
 class RenameColumns(Operation):
+    tag = 'rename'
     def __init__(self, cols_x: pandas.Index, cols_y:pandas.Index):
         self.cols_x = cols_x
         self.cols_y = cols_y

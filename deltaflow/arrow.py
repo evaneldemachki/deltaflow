@@ -6,7 +6,7 @@ from deltaflow.errors import (
     UndoError, IndexerError, IntegrityError, 
     AxisLabelError, InsertionError, 
     ExtensionError, ObjectTypeError,
-    AxisOverlapError
+    AxisOverlapError, DataTypeError
 )
 from deltaflow import fs
 from deltaflow.hash import hash_data, hash_pair, hash_node
@@ -21,11 +21,6 @@ RowIndex = Union[pandas.RangeIndex, pandas.Int64Index]
 ColIndex = pandas.Index
 DataFrameIndexer = Union[PandasObject, RowIndex, ColIndex, Iterable, int, str]
 
-class ArrowData:
-    def __init__(self, data: pandas.DataFrame):
-        self.base = data
-        self.stage = data.copy()
-
 class Layer:
     def __init__(self):
         self.batch = []
@@ -35,31 +30,52 @@ class Layer:
         queue = operation.execute(data)
         return queue
 
-class Stack:
-    def __init__(self):
-        self.layers = []
-    
+class Stage:
+    def __init__(self, data: pandas.DataFrame):
+        self.base = data
+        self.data = data.copy()
+        self.stack = []
+
     def add(self, layer: Layer) -> None:
-        self.layers.append(layer)
+        self.stack.append(layer)
     
-    def revert(self, data: pandas.DataFrame) -> pandas.DataFrame:
+    def revert(self) -> None:
+        data = self.data.copy()
         try:
-            layer = self.layers[-1]
+            layer = self.stack[-1]
             for oper in reversed(layer.batch):
                 data = oper.undo(data)
             
-            self.layers.pop()
+            self.stack.pop()
         except IndexError:
             raise UndoError
 
-        return data
+        self.data = data
     
     # iterate through stack layers as flat sequence of operations
     def iter_operations(self):
-        for layer in self.layers:
+        for layer in self.stack:
             for oper in layer.batch:
                 yield oper
+    
+    def __str__(self):
+        out = '[\n'
+        for layer in self.stack:
+            if len(layer.batch) == 1:
+                out += '  ' + layer.batch[0].display() + ',\n'
+            else:
+                out += '  [\n'
+                for oper in layer.batch:
+                    out += '    ' + oper.display() + ',\n'
+                
+                out += '  ]'
+            
+        out += ']'
+        return out
+    
+    __repr__ = __str__
 
+        
 class Arrow:
     def __init__(self, tree, name):
         node_id = tree.arrow_head(name)
@@ -74,47 +90,52 @@ class Arrow:
         self._tree = tree
         self._origin = (origin_name, origin_id)
 
-        self.data = ArrowData(self._resolve_timeline())
-        self.stack = Stack()
+        self.stage = Stage(self._resolve_timeline())
 
     def proxy(self):
-        return self.data.stage.copy()
+        return self.stage.data.copy()
 
     def undo(self):
-        self.data.stage = self.stack.revert(self.data.stage)
+        self.stage.revert()
         return self.proxy()
 
     # update records in a segment of current stage dataset with
     # ... corresponding proxy records of matching indices
     def update(self, data: PandasObject):
-        # determine matching column names
-        update_cols = op.column_index(self.data.stage).intersection(op.column_index(data))
-        # determine matching row indices
-        data_index = pandas.Int64Index(data.index)
-        stage_index = pandas.Int64Index(self.data.stage.index)
-        update_rows = stage_index.intersection(data_index)
+        # determine columns that intersect with stage
+        stage_columns = self.stage.data.columns
+        update_cols = stage_columns.intersection(op.column_index(data))
+        # determine row indices that intersect with stage
+        stage_index = pandas.Int64Index(self.stage.data.index)
+        update_rows = stage_index.intersection(data.index)
         # select update segments
-        stage = pandas.DataFrame(
-            self.data.stage.loc[update_rows, update_cols])
-        data = pandas.DataFrame(
-            data.loc[update_rows, update_cols])
-        # shrink modifications
+        stage = self.stage.data.loc[update_rows, update_cols]
+        data = data.loc[update_rows, update_cols]
+        # assure update segments have matching dtypes
+        if (stage.dtypes.to_numpy() != data.dtypes.to_numpy()).any():
+            raise DataTypeError
+        # shrink modifications in both directions
         x = op.shrink(data, stage)
         y = op.shrink(stage, data)
+        # if layer is empty, return proxy as is
+        if y.shape[0] == 0:
+            return self.proxy()
+            
         layer = Layer()
-        queue = layer.push(self.data.stage, op.Update(x, y))
-        self.stack.add(layer)
+        self.stage.data = layer.push(self.stage.data, 
+            op.Update(x, y, stage.dtypes))
 
+        self.stage.add(layer)
         return self.proxy()
   
     def drop(self, indexer: DataFrameIndexer, axis: int = 0) -> pandas.DataFrame:
         if axis == 0: # drop rows (default)
             if type(indexer) in (pandas.DataFrame, pandas.Series):
-                ix = indexer.index.intersection(self.data.stage.index)
+                ix = indexer.index.intersection(self.stage.data.index)
             elif hasattr(indexer, '__len__') and not isinstance(indexer, str):
                 try:
                     ix = pandas.Int64Index(indexer).intersection(
-                        self.data.stage.index)
+                        self.stage.data.index)
                 except:
                     raise IndexerError(axis, indexer)
             else:
@@ -124,27 +145,27 @@ class Arrow:
                 return self.proxy()
 
             layer = Layer()
-            oper = op.DropRows(self.data.stage.loc[ix], self.data.stage.index)
-            self.data.stage = layer.push(self.data.stage, oper)
-            self.stack.add(layer)
+            oper = op.DropRows(self.stage.data.loc[ix], self.stage.data.index)
+            self.stage.data = layer.push(self.stage.data, oper)
+            self.stage.add(layer)
 
             return self.proxy()
 
         elif axis == 1: # drop columns
             if type(indexer) == pandas.DataFrame:
-                ix = indexer.columns.intersection(self.data.stage.columns)
+                ix = indexer.columns.intersection(self.stage.data.columns)
             elif type(indexer) == pandas.Series:
                 ix = pandas.Index([indexer.name]).intersection(
-                    self.data.stage.columns)
+                    self.stage.data.columns)
             elif hasattr(indexer, '__len__') and not isinstance(indexer, str):
                 try:
                     ix = pandas.Index(indexer).intersection(
-                        self.data.stage.index)
+                        self.stage.data.index)
                 except:
                     raise IndexerError(axis, indexer)
             elif type(indexer) == str:
                 ix = pandas.Index([indexer]).intersection(
-                    self.data.stage.columns)
+                    self.stage.data.columns)
             else:
                 raise IndexerError(axis, indexer)
             
@@ -152,9 +173,9 @@ class Arrow:
                 return self.proxy()
 
             layer = Layer()
-            oper = op.DropColumns(self.data.stage.loc[:,ix], self.data.stage.columns)
-            self.data.stage = layer.push(self.data.stage, oper)
-            self.stack.add(layer)
+            oper = op.DropColumns(self.stage.data.loc[:,ix], self.stage.data.columns)
+            self.stage.data = layer.push(self.stage.data, oper)
+            self.stage.add(layer)
             
             return self.proxy()
     
@@ -163,19 +184,19 @@ class Arrow:
             if data.name is None:
                 raise AxisLabelError
 
-            ext_rows = self.data.stage.index.intersection(data.index)
+            ext_rows = self.stage.data.index.intersection(data.index)
             ext_data = data.loc[ext_rows]
-            if len(ext_data) != len(self.data.stage):
-                raise InsertionError(self.data.stage, ext_data)
+            if len(ext_data) != len(self.stage.data):
+                raise InsertionError(self.stage.data, ext_data)
 
             oper = op.AddColumns(pandas.DataFrame(ext_data))
             return oper
         elif type(data) is pandas.DataFrame:
-            ext_cols = data.columns.difference(self.data.stage.columns)
-            ext_rows = self.data.stage.index.intersection(data.index)
+            ext_cols = data.columns.difference(self.stage.data.columns)
+            ext_rows = self.stage.data.index.intersection(data.index)
             ext_data = data.loc[ext_rows, ext_cols]
-            if ext_data.shape[0] != self.data.stage.shape[0]:
-                raise InsertionError(self.data.stage, ext_data)
+            if ext_data.shape[0] != self.stage.data.shape[0]:
+                raise InsertionError(self.stage.data, ext_data)
 
             oper = op.AddColumns(ext_data)
             return oper
@@ -184,10 +205,10 @@ class Arrow:
         ext_rows: RowIndex, ext_cols: ColIndex) -> Operation:
         # data & stage columns must be equal
         if (len(data.columns.intersection(
-            self.data.stage.columns)) != len(self.data.stage.columns)):
+            self.stage.data.columns)) != len(self.stage.data.columns)):
             raise ExtensionError(0)
 
-        ext_data = data.loc[ext_rows, self.data.stage.columns]
+        ext_data = data.loc[ext_rows, self.stage.data.columns]
         oper = op.AddRows(ext_data)
     
     def _ext_both(self, data: pandas.DataFrame,
@@ -204,31 +225,31 @@ class Arrow:
         if type(data) is pandas.Series: # extend only cols
             layer = Layer()
             oper = self._ext_cols(data)
-            self.data.stage = layer.push(self.data.stage, oper)
-            self.stack.add(layer)
+            self.stage.data = layer.push(self.stage.data, oper)
+            self.stage.add(layer)
         elif type(data) is pandas.DataFrame:
             ext_cols = data.columns.difference(
-                self.data.stage.columns)
+                self.stage.data.columns)
             ext_rows = data.index.difference(
-                self.data.stage.index)
+                self.stage.data.index)
             if len(ext_cols) == len(ext_rows) == 0:
                 return self.proxy()
             elif len(ext_cols) == 0 and len(ext_rows) != 0: # extend only rows
                 oper = self._ext_rows(data)
                 layer = Layer()
-                self.data.stage = layer.push(self.data.stage, oper)
-                self.stack.add(layer)
+                self.stage.data = layer.push(self.stage.data, oper)
+                self.stage.add(layer)
             elif len(ext_cols) != 0 and len(ext_rows) == 0: # extend only cols
                 oper = self._ext_cols(data)
                 layer = Layer()
-                self.data.stage = layer.push(self.data.stage, oper)
-                self.stack.add(layer)
+                self.stage.data = layer.push(self.stage.data, oper)
+                self.stage.add(layer)
             elif len(ext_cols) != 0 and len(ext_rows) != 0: # extend rows & cols
                 row_oper, col_oper = _ext_both(data, ext_rows, ext_cols)
                 layer = Layer()
-                queue = layer.push(self.data.stage, row_oper)
-                self.data.stage = layer.push(queue, col_oper)
-                self.stack.add(layer)
+                queue = layer.push(self.stage.data, row_oper)
+                self.stage.data = layer.push(queue, col_oper)
+                self.stage.add(layer)
             else:
                 raise ExtensionError(1)
         else:
@@ -237,19 +258,19 @@ class Arrow:
         return self.proxy()
     
     def set_index(self, data: Union[PandasObject, RowIndex]) -> pandas.DataFrame:
-        if data.shape[0] != self.data.stage.shape[0]:
-            raise SetIndexError(self.data.stage.shape[0], data.shape[0])
+        if data.shape[0] != self.stage.data.shape[0]:
+            raise SetIndexError(self.stage.data.shape[0], data.shape[0])
         layer = Layer()
-        oper = op.Reindex(self.data.stage.index, data.index)
-        self.data.stage = layer.push(self.data.stage, oper)
-        self.stack.add(layer)
+        oper = op.Reindex(self.stage.data.index, data.index)
+        self.stage.data = layer.push(self.stage.data, oper)
+        self.stage.add(layer)
 
         return self.proxy()
 
     def commit(self):
         parent_id = self.head.id
         origin_hash = self.head.origin
-        data_hash = hash_data(self.data.stage)
+        data_hash = hash_data(self.stage.data)
         delta = Delta(self)
         make = delta.make()
         node = Node(origin_hash, parent_id, make)
@@ -266,7 +287,9 @@ class Arrow:
             f.write(node_id)
         
         self.head = self._tree.node(node_id)
-        print(self)
+        self.stage.stack = []
+
+        return repr(self)
 
     def _resolve_timeline(self) -> pandas.DataFrame:
         path = self._tree.path

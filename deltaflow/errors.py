@@ -111,6 +111,12 @@ class AxisOverlapError(Error):
     msg = "column extension contains existing labels"
     def __init__(self):
         self.msg = self.msg
+    
+class DataTypeError(Error):
+    """raised when data types do not match stage"""
+    msg = "data types must match stage at intersections"
+    def __init__(self):
+        self.msg = self.msg
 
 class UndoError(Error):
     """raised when undo is called with empty stack"""

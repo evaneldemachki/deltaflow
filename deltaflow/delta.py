@@ -7,7 +7,7 @@ from deltaflow.hash import hash_data
 
 PandasRowIndex = Union[pandas.Int64Index, pandas.RangeIndex]
 Arrow = TypeVar('Arrow')
-Stack = TypeVar('Stack')
+Stage = TypeVar('Stage')
 
 def encapsulate(data):
     name = '' if data.name is None else data.name
@@ -36,8 +36,8 @@ def unwrap(data):
 
 block_order = (
     'drop_rows', 'drop_cols', 'reindex', 
-    'rename', 'put_data', 'ext_cols', 
-    'ext_rows', 'index', 'columns'
+    'rename', 'put_data', 'set_types',
+    'ext_cols', 'ext_rows', 'index', 'columns'
 )
 block_function = {
     'drop_rows': lambda data, block: data.drop(unwrap(block)),
@@ -46,6 +46,7 @@ block_function = {
     'rename': lambda data, block: data.set_axis(unwrap(block), axis=1),
     'put_data': lambda data, block: (
         lambda x,y: (x.update(y), x)[-1])(data.copy(), block),
+    'set_types': lambda data, block: data.astype(block.to_dict()['dt']),
     'ext_cols': lambda data, block: pandas.concat([data, block], axis=1),
     'ext_rows': lambda data, block: pandas.concat([data, block], axis=0),
     'index': lambda data, block: data.set_axis(unwrap(block), axis=0),
@@ -57,6 +58,7 @@ class DeltaBase:
         self.base = base
         self.data = base.copy()
         self.put_data = None
+        self.set_types = None
         # track row drops
         self.dropped_rows = pandas.Int64Index([])
         # track row drops
@@ -142,11 +144,11 @@ class DeltaExtension:
         
 class Delta:
     def __init__(self, arrow: Arrow):
-        self.base = DeltaBase(arrow.data.base)
-        self.extension = DeltaExtension(arrow.data.stage)
-        self.index = arrow.data.stage.index
-        self.columns = arrow.data.stage.columns
-        self.build(arrow.stack)
+        self.base = DeltaBase(arrow.stage.base)
+        self.extension = DeltaExtension(arrow.stage.data)
+        self.index = arrow.stage.data.index
+        self.columns = arrow.stage.data.columns
+        self.build(arrow.stage)
     
     def make(self) -> OrderedDict:
         base = self.base
@@ -162,6 +164,8 @@ class Delta:
                 list(base.data.columns) != list(base.base.columns)) else False,
             'put_data': base.put_data if (
                 base.put_data is not None) else False,
+            'set_types': base.set_types if (
+                base.set_types is not None) else False,
             'ext_cols': ext.col_block if (
                 ext.col_block is not None) else False,
             'ext_rows': ext.row_block if (
@@ -172,9 +176,9 @@ class Delta:
         make = [(key, scheme[key]) for key in block_order]
         return OrderedDict(make)
 
-    def build(self, stack: Stack) -> None:
+    def build(self, stage: Stage) -> None:
         # stage 1: track base schema changes
-        for oper in stack.iter_operations():
+        for oper in stage.iter_operations():
             optype = type(oper)
             if optype == op.DropRows:
                 self.base.drop_rows(oper.rows.index)
@@ -191,16 +195,21 @@ class Delta:
         # stage 2: calculate and shrink base modifications
         x = self.base.base
         y = self.base.data
+        # match x & y index in preparation for shrink
         x.index = y.index
         x.columns = y.columns
         shrink_base = op.shrink(x, y)
-        if not shrink_base.isna().all().all():
+        if not shrink_base.shape[0] == 0:
             self.base.put_data = shrink_base
-        # stage 3: calculate extension tri-block
+            if (x.dtypes.to_numpy() != shrink_base.dtypes.to_numpy()).any():
+                self.base.set_types = pandas.DataFrame(
+                    [str(dt) for dt in x.dtypes],
+                    index = x.columns, columns=['dt']
+                )       
+        # stage 3: calculate extension row, column block pair
         ext = self.extension
         ext_index = ext.data.index.difference(self.base.data.index)
         ext_cols = ext.data.columns.difference(self.base.data.columns)
-
         if len(ext_cols) != 0:
             ext.col_block = ext.data.loc[self.base.data.index, ext_cols]
         if len(ext_index) != 0:
