@@ -1,3 +1,5 @@
+import pandas
+
 class Error(Exception):
     def __str__(self):
         return self.msg
@@ -101,10 +103,15 @@ class ObjectTypeError(Error):
             strf_axis[axis]['base_types'], type(obj))
 
 class AxisLabelError(Error):
-    """raised when column extension object with no axis labels is passed"""
-    msg = "column extension requires axis label(s)"
-    def __init__(self):
-        self.msg = self.msg
+    """raised when column object with no axis labels is passed"""
+    msg_dataframe = "'{0}' object requires {1}"
+    msg_map = {
+        'Series': ['pandas.Series', 'name attribute'],
+        'DataFrame': ['pandas.DataFrame', 'column labels']
+    }
+    def __init__(self, obj_type):
+        self.msg = self.msg.format(*self.msg_map[obj_type])
+
 
 class AxisOverlapError(Error):
     """raised when column extension contains existing labels"""

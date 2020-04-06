@@ -14,7 +14,13 @@ from deltaflow.node import OriginNode
 # Initialize a field directory in given path
 def touch(path: str = os.getcwd()) -> None:
     core_path = os.path.join(path, '.deltaflow')
-    os.mkdir(core_path)
+    try:
+        os.mkdir(core_path)
+    except FileExistsError:
+        print("WARNING: new field not created (field already exists)")
+        return
+    except:
+        raise
 
     orig_path = os.path.join(core_path, 'origins')
     with open(orig_path, 'w') as f:

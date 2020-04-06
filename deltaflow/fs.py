@@ -12,7 +12,7 @@ Block = TypeVar('DeltaBlock')
 
 # Chunk reader & writer for delta files
 class DeltaIO: # masks each block as a seperate file
-    def __init__(self, obj: BinaryIO(), chunks: List[int]):
+    def __init__(self, obj: BinaryIO, chunks: List[int]):
         self.obj = obj
         self.chunks = chunks
         self._cursor = 0

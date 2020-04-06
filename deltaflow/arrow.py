@@ -77,7 +77,7 @@ class Stage:
 
         
 class Arrow:
-    def __init__(self, tree, name):
+    def __init__(self, tree: Tree, name: str):
         node_id = tree.arrow_head(name)
         self.name = name
         self.head = tree.node(node_id)
@@ -128,61 +128,76 @@ class Arrow:
         self.stage.add(layer)
         return self.proxy()
   
-    def drop(self, indexer: DataFrameIndexer, axis: int = 0) -> pandas.DataFrame:
+    def drop(self, indexer: DataFrameIndexer, axis: int = 0, 
+        method: str = 'intersection') -> pandas.DataFrame:
+        if method == 'intersection':
+            ix_method = pandas.Index.intersection
+        elif method == 'difference':
+            ix_method = pandas.Index.difference
+        else:
+            raise ValueError("method must be 'intersection' or 'difference'")
+
         if axis == 0: # drop rows (default)
             if type(indexer) in (pandas.DataFrame, pandas.Series):
-                ix = indexer.index.intersection(self.stage.data.index)
+                ix = ix_method(self.stage.data.index, indexer.index)
             elif hasattr(indexer, '__len__') and not isinstance(indexer, str):
                 try:
-                    ix = pandas.Int64Index(indexer).intersection(
-                        self.stage.data.index)
-                except:
+                    ix = pandas.Int64Index(indexer)
+                except TypeError:
                     raise IndexerError(axis, indexer)
+                except:
+                    raise
+
+                ix = ix_method(self.stage.data.index, indexer.index)
             else:
                 raise IndexerError(axis, indexer)
-                
-            if len(ix) == 0:
-                return self.proxy()
-
-            layer = Layer()
-            oper = op.DropRows(self.stage.data.loc[ix], self.stage.data.index)
-            self.stage.data = layer.push(self.stage.data, oper)
-            self.stage.add(layer)
-
-            return self.proxy()
-
         elif axis == 1: # drop columns
             if type(indexer) == pandas.DataFrame:
-                ix = indexer.columns.intersection(self.stage.data.columns)
+                ix = ix_method(self.stage.data.columns, indexer.columns)
             elif type(indexer) == pandas.Series:
-                ix = pandas.Index([indexer.name]).intersection(
-                    self.stage.data.columns)
-            elif hasattr(indexer, '__len__') and not isinstance(indexer, str):
-                try:
-                    ix = pandas.Index(indexer).intersection(
-                        self.stage.data.index)
-                except:
-                    raise IndexerError(axis, indexer)
+                if indexer.name is None:
+                    raise AxisLabelError('Series')
+                ix = pandas.Index([indexer.name])
+                ix = ix_method(self.stage.data.columns, ix)
             elif type(indexer) == str:
-                ix = pandas.Index([indexer]).intersection(
-                    self.stage.data.columns)
+                ix = pandas.Index([indexer])
+                ix = ix_method(self.stage.data.columns, ix)
+            elif hasattr(indexer, '__len__'):
+                try:
+                    ix = pandas.Index(indexer)
+                except TypeError:
+                    raise IndexerError(axis, indexer)
+                except:
+                    raise
+
+                ix = ix_method(self.stage.data.index, ix)
             else:
                 raise IndexerError(axis, indexer)
+        else:
+            raise ValueError('axis must be 0 or 1')
             
-            if len(ix) == 0:
-                return self.proxy()
+        if len(ix) == 0:
+            if method == 'intersection':
+                print("WARNING: nothing dropped (no intersection)")
+            else:
+                print("WARNING: nothing dropped (no difference)")
 
-            layer = Layer()
-            oper = op.DropColumns(self.stage.data.loc[:,ix], self.stage.data.columns)
-            self.stage.data = layer.push(self.stage.data, oper)
-            self.stage.add(layer)
-            
             return self.proxy()
+
+        layer = Layer()
+        if axis == 0:
+            oper = op.DropRows(self.stage.data.loc[ix], self.stage.data.index)
+        else:
+            oper = op.DropColumns(self.stage.data.loc[:,ix], self.stage.data.columns)
+        
+        self.stage.data = layer.push(self.stage.data, oper)
+        self.stage.add(layer)
+        return self.proxy()
     
     def _ext_cols(self, data: PandasObject) -> Operation:
         if type(data) is pandas.Series:
             if data.name is None:
-                raise AxisLabelError
+                raise AxisLabelError('Series')
 
             ext_rows = self.stage.data.index.intersection(data.index)
             ext_data = data.loc[ext_rows]

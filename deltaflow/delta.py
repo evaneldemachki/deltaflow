@@ -201,7 +201,11 @@ class Delta:
         shrink_base = op.shrink(x, y)
         if not shrink_base.shape[0] == 0:
             self.base.put_data = shrink_base
-            if (x.dtypes.to_numpy() != shrink_base.dtypes.to_numpy()).any():
+            # dtype preservation
+            cond = (x.dtypes.to_numpy() != shrink_base.dtypes.to_numpy())
+            if type(cond) is numpy.array:
+                cond = cond.any()
+            if cond: # dtypes differ after shrink -> write dtypes to delta
                 self.base.set_types = pandas.DataFrame(
                     [str(dt) for dt in x.dtypes],
                     index = x.columns, columns=['dt']
