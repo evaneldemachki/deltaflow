@@ -4,54 +4,18 @@ from typing import TypeVar, Union
 from collections import OrderedDict
 from deltaflow import operation as op
 from deltaflow.hash import hash_data
+from deltaflow.block import IndexBlock, PutBlock, ExtensionBlock
 
 PandasRowIndex = Union[pandas.Int64Index, pandas.RangeIndex]
 Arrow = TypeVar('Arrow')
 Stage = TypeVar('Stage')
 
-def encapsulate(data):
-    name = '' if data.name is None else data.name
-    obj_type = str(type(data))[8:-2].split('.')[-1]   
-    meta = '.'.join([name, obj_type])
-
-    return pandas.DataFrame(data.to_numpy(), columns=[meta])
-
-def unwrap(data):
-    meta = data.columns[0]
-    meta_split = meta.split('.')
-    dtfs = meta_split.pop(-1)
-    name = '.'.join(meta_split)
-
-    obj = getattr(pandas, dtfs)
-    if name == '':
-        if dtfs == 'RangeIndex':
-            return obj(data[meta].min(), data[meta].max() + 1)
-        else:
-            return obj(data[meta].to_numpy())
-    else:
-        if dtfs == 'RangeIndex':
-            return obj(data[meta].min(), data[meta].max() + 1, name=name) 
-        else:
-            return obj(data[meta].to_numpy(), name=name)
-
-block_order = (
+# order that blocks must be read and written
+block_order = ( # this order cannot be changed
     'drop_rows', 'drop_cols', 'reindex', 
-    'rename', 'put_data', 'set_types',
+    'rename', 'put', 'set_types',
     'ext_cols', 'ext_rows', 'index', 'columns'
 )
-block_function = {
-    'drop_rows': lambda data, block: data.drop(unwrap(block)),
-    'drop_cols': lambda data, block: data.drop(unwrap(block), axis=1),
-    'reindex': lambda data, block: data.set_index(unwrap(block)),
-    'rename': lambda data, block: data.set_axis(unwrap(block), axis=1),
-    'put_data': lambda data, block: (
-        lambda x,y: (x.update(y), x)[-1])(data.copy(), block),
-    'set_types': lambda data, block: data.astype(block.to_dict()['dt']),
-    'ext_cols': lambda data, block: pandas.concat([data, block], axis=1),
-    'ext_rows': lambda data, block: pandas.concat([data, block], axis=0),
-    'index': lambda data, block: data.set_axis(unwrap(block), axis=0),
-    'columns': lambda data, block: data.set_axis(unwrap(block), axis=1)
-}
 
 class DeltaBase:
     def __init__(self, base):
@@ -64,7 +28,7 @@ class DeltaBase:
         # track row drops
         self.dropped_cols = pandas.Index([])
     
-    def update(self, data:pandas.DataFrame) -> None:
+    def put(self, data:pandas.DataFrame) -> None:
         self.data.update(data)
 
     def rename_columns(self, cols_x: pandas.Index, cols_y: pandas.Index) -> None:
@@ -153,28 +117,44 @@ class Delta:
     def make(self) -> OrderedDict:
         base = self.base
         ext = self.extension
-        scheme = {
-            'drop_rows': encapsulate(base.dropped_rows) if (
-                len(base.dropped_rows) > 0) else False,
-            'drop_cols': encapsulate(base.dropped_cols) if (
-                len(base.dropped_cols) > 0) else False,
-            'reindex': encapsulate(base.data.index) if (
-                list(base.data.index) != list(base.base.index)) else False, 
-            'rename': encapsulate(base.data.columns) if (
-                list(base.data.columns) != list(base.base.columns)) else False,
-            'put_data': base.put_data if (
-                base.put_data is not None) else False,
-            'set_types': base.set_types if (
-                base.set_types is not None) else False,
-            'ext_cols': ext.col_block if (
-                ext.col_block is not None) else False,
-            'ext_rows': ext.row_block if (
-                ext.row_block is not None) else False,
-            'index': encapsulate(self.index), 
-            'columns': encapsulate(self.columns)
-        }
-        make = [(key, scheme[key]) for key in block_order]
-        return OrderedDict(make)
+
+        scheme = OrderedDict()
+
+        base_drop = [
+            ('drop_rows', base.dropped_rows), 
+            ('drop_cols', base.dropped_cols)
+        ]
+        for axis in range(len(base_drop)):
+            key, obj = base_drop[axis]
+            if obj.shape[0] > 0:
+                scheme[key] = IndexBlock(obj, axis=axis, method='drop')
+        
+        base_set = [
+            ('reindex', base.data.index, base.base.index),
+            ('rename', base.data.columns, base.base.columns)
+        ]
+        for axis in range(len(base_set)):
+            key, obj, comp = base_set[axis]
+            if not (obj == comp).all():
+                scheme[key] = IndexBlock(obj, axis=axis, method='set')
+        
+        if base.put_data is not None:
+            scheme['put'] = PutBlock(base.put_data, dtypes=base.set_types)
+        
+        ext_blocks = [
+            ('ext_cols', ext.col_block),
+            ('ext_rows', ext.row_block)
+        ]
+        for i in range(len(ext_blocks)):
+            axis = abs(i - 1)
+            key, obj = ext_blocks[i]
+            if obj is not None:
+                scheme[key] = ExtensionBlock(obj, axis=axis)
+        
+        scheme['index'] = IndexBlock(self.index, axis=0, method='set')
+        scheme['columns'] = IndexBlock(self.columns, axis=1, method='set')
+        
+        return scheme
 
     def build(self, stage: Stage) -> None:
         # stage 1: track base schema changes
@@ -188,8 +168,8 @@ class Delta:
                 self.base.reindex(oper.index_x, oper.index_y)
             elif optype == op.RenameColumns:
                 self.base.rename_columns(oper.cols_x, oper.cols_y)
-            elif optype == op.Update:
-                self.base.update(oper.data_y)
+            elif optype == op.Put:
+                self.base.put(oper.data_y)
             else:
                 continue
         # stage 2: calculate and shrink base modifications
@@ -206,10 +186,7 @@ class Delta:
             if type(cond) is numpy.array:
                 cond = cond.any()
             if cond: # dtypes differ after shrink -> write dtypes to delta
-                self.base.set_types = pandas.DataFrame(
-                    [str(dt) for dt in x.dtypes],
-                    index = x.columns, columns=['dt']
-                )       
+                self.base.set_types = x.dtypes   
         # stage 3: calculate extension row, column block pair
         ext = self.extension
         ext_index = ext.data.index.difference(self.base.data.index)

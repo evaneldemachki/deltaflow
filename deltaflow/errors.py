@@ -131,3 +131,7 @@ class UndoError(Error):
     def __init__(self):
         self.msg = self.msg
 
+class BlockError(Error):
+    """raised on block apply method failure"""
+    def __init__(self, msg):
+        self.msg = msg

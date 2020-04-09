@@ -9,7 +9,7 @@ from deltaflow import fs
 from deltaflow.hash import hash_data, hash_node
 from deltaflow.tree import Tree
 from deltaflow.arrow import Arrow
-from deltaflow.node import OriginNode
+from deltaflow.node import make_origin
 
 # Initialize a field directory in given path
 def touch(path: str = os.getcwd()) -> None:
@@ -44,13 +44,13 @@ class Field:
     def arrow(self, name: str) -> Arrow:
         arrow = Arrow(self.tree, name)
         return arrow
-    
+        
     # add pandas dataframe as new origin with given name
     def add_origin(self, data: pandas.DataFrame, name: str) -> None:
         # create origin
         origin_hash = hash_data(data)
-        origin_node_str = OriginNode(origin_hash, data).to_json()
-        node_id = hash_node(origin_node_str)
+        node_str = make_origin(origin_hash, data)
+        node_id = hash_node(node_str)
 
         origins = self.tree.origins
         if name in origins:
@@ -63,7 +63,7 @@ class Field:
 
         path = os.path.join(self.tree.path, 'nodes', node_id)
         with open(path, 'w') as f:
-            f.write(origin_node_str)
+            f.write(node_str)
 
         origins = origins.to_dict()
         origins[name] = node_id

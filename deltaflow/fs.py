@@ -6,8 +6,8 @@ from typing import Tuple, List, TypeVar, IO, BinaryIO
 import fastparquet
 from deltaflow.errors import NameExistsError
 from deltaflow.delta import block_order
+from collections import OrderedDict
 
-OrderedDict = TypeVar('OrderedDict')
 Block = TypeVar('DeltaBlock')
 
 # Chunk reader & writer for delta files
@@ -89,58 +89,85 @@ class DeltaIO: # masks each block as a seperate file
     def __exit__(self, *ignore):
         pass
 
+def delta_reader(path: str, node_id: str) -> BinaryIO:
+    delta_path = os.path.join(path, 'deltas', node_id + '.delta')
+    deltafile = open(delta_path, 'rb')
+    
+    return deltafile
+
 # Iterates through delta make, write delta file
 def write_delta(path: str, node_id: str, make: OrderedDict):
     fpath = os.path.join(path, 'deltas', node_id + '.delta')
-    # constant byte size, boolean array which is written to the end of delta file
-    tail = struct.pack( # used during file read to parse chunk index
-        '?' * len(make), # one true/false value for each make entry
-        *[True if make[key] is not False
-            else False for key in make]
-    )
-    blocks = [key for key in make if make[key] is not False]
-    chunksfs = 'q' * len(blocks)
-    chunks = []
+    meta = OrderedDict()
     with open(fpath, 'wb') as deltafile:
-        delta_io = DeltaIO(deltafile, chunks)
-        for key in blocks:
-            # write each block as parquet file using fastparquet
-            fastparquet.write('null', make[key], open_with=lambda *ignore: delta_io)
-            delta_io.add_chunk(delta_io.tell())
+        delta_io = DeltaIO(deltafile, [])
+        for key in make:
+            # write each block payload as to parquet
+            payload = make[key].payload
+            fastparquet.write('null', payload, open_with=lambda *ignore: delta_io)
+            chunk_size = delta_io.tell()
+            delta_io.add_chunk(chunk_size)
+            # log chunk size to block meta
+            make[key].meta['chunk'] = chunk_size
+            # write block meta to meta list
+            meta[key] = make[key].meta
             delta_io.cursor += 1
-        # write chunks and tail to end of delta file
-        chunks = struct.pack(chunksfs, *chunks)
-        delta_io.write(chunks)
+
+        # convert meta to utf-8 encoded JSON string
+        meta = json.dumps(meta).encode('utf-8')
+        # calculate encoded meta size pack into 8-byte long long struct
+        tail = struct.pack('q', len(meta))
+        # write meta followed by tail
+        delta_io.write(meta)
         delta_io.write(tail)
 
 # Yields key, block pairs on each iteration given delta file
 def iter_delta(path: str, node_id: str) -> Tuple[str, Block]:
-    delta_path = os.path.join(path, 'deltas', node_id + '.delta')
-    delta_size = os.path.getsize(delta_path)
-    with open(delta_path, 'rb') as deltafile:
-        tailfs = '?' * len(block_order)
-        n = struct.calcsize(tailfs)
-        # seek to last n bytes to read tail
-        deltafile.seek(-n, os.SEEK_END)
-        tail = struct.unpack(tailfs, deltafile.read())
-        # map tail values to block_order, create meta indexer
-        indexer = [block_order[i] for i in range(len(block_order)) if tail[i] is not False]
-        chunksfs = 'q' * len(indexer)
-        m = struct.calcsize(chunksfs)
-        # seek to the last n + m bytes, read m-byte chunk index
-        deltafile.seek(-(n + m), os.SEEK_END)
-        chunks = struct.unpack(chunksfs, deltafile.read(m))
+    deltafile = delta_reader(path, node_id)
+    with deltafile as deltafile:
+        # read chunk meta
+        meta = read_meta(deltafile)
+        chunks = [meta[key]['chunk'] for key in meta]
         # block generator
         deltafile.seek(0)
-        end = delta_size - n - m
         delta_io = DeltaIO(deltafile, chunks)
-        for key in indexer:
+        for key in meta:
             block = fastparquet.ParquetFile(
                 'null', open_with=lambda *ignore: delta_io)
             delta_io.seek(0)
-            bp = block.to_pandas()
+            block = block.to_pandas()
             delta_io.cursor += 1
-            yield key, bp
+            yield meta[key], block
+
+# Return individual block of delta file given key
+def read_block(path: str, node_id: str, i: int) -> Tuple[str, Block]:
+    deltafile = delta_reader(path, node_id)
+    with deltafile as deltafile:
+        meta = read_meta(deltafile)
+        key = list(meta)[i]
+        chunks = [meta[key]['chunk'] for key in meta]
+        # read block
+        deltafile.seek(0)
+        delta_io = DeltaIO(deltafile, chunks)
+        delta_io.cursor = i
+        block = fastparquet.ParquetFile(
+            'null', open_with=lambda *ignore: delta_io)
+
+        block = block.to_pandas()
+    
+    return meta[key], block
+
+# Read chunk meta data of a delta file
+def read_meta(deltafile: BinaryIO) -> OrderedDict:
+    # seek to last 8 bytes to read tail
+    deltafile.seek(-8, os.SEEK_END)
+    tail = struct.unpack('q', deltafile.read())[0]
+    # decode meta from (-tail - 8, -8) bytes of deltafile
+    deltafile.seek(-tail - 8, os.SEEK_END)
+    meta = deltafile.read(tail).decode('utf-8')
+    meta = json.loads(meta, object_pairs_hook=OrderedDict)
+
+    return meta
 
 def write_origin(path: str, name: str, data: pandas.DataFrame):
     origin_path = os.path.join(path, name + '.origin')
@@ -153,4 +180,7 @@ def load_origin(path: str, name: str) -> pandas.DataFrame:
     origin_path = os.path.join(
         os.path.dirname(path), name + '.origin')
     data = fastparquet.ParquetFile(origin_path).to_pandas()
+    if data.index.name == 'index':
+        data.index.name = None
+
     return data

@@ -10,12 +10,13 @@ from deltaflow.errors import (
 )
 from deltaflow import fs
 from deltaflow.hash import hash_data, hash_pair, hash_node
-from deltaflow.delta import Delta, block_function
-from deltaflow.node import Node
+from deltaflow.delta import Delta
+from deltaflow.node import make_node
+from deltaflow.block import class_map
 import deltaflow.operation as op
 
 Tree = TypeVar('Tree')
-Operation = op.Operation
+Operation = TypeVar('Operation')
 PandasObject = Union[pandas.DataFrame, pandas.Series]
 RowIndex = Union[pandas.RangeIndex, pandas.Int64Index]
 ColIndex = pandas.Index
@@ -62,11 +63,11 @@ class Stage:
         out = '[\n'
         for layer in self.stack:
             if len(layer.batch) == 1:
-                out += '  ' + layer.batch[0].display() + ',\n'
+                out += '  ' + str(layer.batch[0]) + ',\n'
             else:
                 out += '  [\n'
                 for oper in layer.batch:
-                    out += '    ' + oper.display() + ',\n'
+                    out += '    ' + str(oper) + ',\n'
                 
                 out += '  ]'
             
@@ -92,16 +93,20 @@ class Arrow:
 
         self.stage = Stage(self._resolve_timeline())
 
-    def proxy(self):
+    def proxy(self) -> pandas.DataFrame:
         return self.stage.data.copy()
 
-    def undo(self):
-        self.stage.revert()
+    def undo(self) -> pandas.DataFrame:
+        try:
+            self.stage.revert()
+        except UndoError:
+            print("WARNING: nothing un-done (stage is empty)")
+            return None
+
         return self.proxy()
 
-    # update records in a segment of current stage dataset with
-    # ... corresponding proxy records of matching indices
-    def update(self, data: PandasObject):
+    # take difference between stage and proxy at shared indices, put difference in stage
+    def put(self, data: PandasObject):
         # determine columns that intersect with stage
         stage_columns = self.stage.data.columns
         update_cols = stage_columns.intersection(op.column_index(data))
@@ -123,7 +128,7 @@ class Arrow:
             
         layer = Layer()
         self.stage.data = layer.push(self.stage.data, 
-            op.Update(x, y, stage.dtypes))
+            op.Put(x, y, stage.dtypes))
 
         self.stage.add(layer)
         return self.proxy()
@@ -145,8 +150,6 @@ class Arrow:
                     ix = pandas.Int64Index(indexer)
                 except TypeError:
                     raise IndexerError(axis, indexer)
-                except:
-                    raise
 
                 ix = ix_method(self.stage.data.index, indexer.index)
             else:
@@ -204,7 +207,7 @@ class Arrow:
             if len(ext_data) != len(self.stage.data):
                 raise InsertionError(self.stage.data, ext_data)
 
-            oper = op.AddColumns(pandas.DataFrame(ext_data))
+            oper = op.ExtendColumns(pandas.DataFrame(ext_data))
             return oper
         elif type(data) is pandas.DataFrame:
             ext_cols = data.columns.difference(self.stage.data.columns)
@@ -213,7 +216,7 @@ class Arrow:
             if ext_data.shape[0] != self.stage.data.shape[0]:
                 raise InsertionError(self.stage.data, ext_data)
 
-            oper = op.AddColumns(ext_data)
+            oper = op.ExtendColumns(ext_data)
             return oper
     
     def _ext_rows(self, data: pandas.DataFrame, 
@@ -224,7 +227,7 @@ class Arrow:
             raise ExtensionError(0)
 
         ext_data = data.loc[ext_rows, self.stage.data.columns]
-        oper = op.AddRows(ext_data)
+        oper = op.ExtendRows(ext_data)
     
     def _ext_both(self, data: pandas.DataFrame,
         ext_rows: RowIndex, ext_cols: ColIndex) -> Tuple[Operation, Operation]:
@@ -275,6 +278,7 @@ class Arrow:
     def set_index(self, data: Union[PandasObject, RowIndex]) -> pandas.DataFrame:
         if data.shape[0] != self.stage.data.shape[0]:
             raise SetIndexError(self.stage.data.shape[0], data.shape[0])
+
         layer = Layer()
         oper = op.Reindex(self.stage.data.index, data.index)
         self.stage.data = layer.push(self.stage.data, oper)
@@ -288,13 +292,13 @@ class Arrow:
         data_hash = hash_data(self.stage.data)
         delta = Delta(self)
         make = delta.make()
-        node = Node(origin_hash, parent_id, make)
-        node_str = node.to_json()
+        node_str = make_node(origin_hash, parent_id, make)
         node_id = hash_pair(hash_node(node_str), data_hash)
-        
+
         node_path = os.path.join(self._tree.path, 'nodes', node_id)
         with open(node_path, 'w') as f:
             f.write(node_str)
+
         fs.write_delta(self._tree.path, node_id, make)
 
         arrow_path = os.path.join(self._tree.path, 'arrows', self.name)
@@ -318,9 +322,10 @@ class Arrow:
         # apply deltas in timeline (excluding origin node)
         for node_id in list(self._timeline)[1:]:
             node_hash = self._timeline[node_id]
-            for key, block in fs.iter_delta(path, node_id):
-                if key in block_function:
-                    data = block_function[key](data, block)
+            for meta, block in fs.iter_delta(path, node_id):
+                block_class = class_map[meta['class']]
+                obj = block_class.unwrap(meta, block)
+                data = block_class.apply(meta, obj, data)
             
             # assure reconstructed node_id matches true node_id
             data_hash = hash_data(data)

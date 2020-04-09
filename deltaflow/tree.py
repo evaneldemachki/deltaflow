@@ -4,6 +4,7 @@ import pandas
 from collections import OrderedDict
 from deltaflow.errors import NameLookupError, IdLookupError
 from deltaflow.hash import hash_node
+from deltaflow.node import Node
 
 class NodeLink:
     def __init__(self, node_id: str):
@@ -25,40 +26,6 @@ class NodeLink:
     @property
     def children_ids(self) -> list:
         return [obj.id for obj in self.children]
-
-class NodeInfo:
-    private = ('_id', '_node', '_node_hash')
-    def __init__(self, node_id: str, node_hash: str, node: OrderedDict):
-        self.__dict__['_id'] = node_id
-        self.__dict__['_node'] = node
-        self.__dict__['_node_hash'] = node_hash
-        if node['parent'] is None:
-            self.__dict__['_node_type'] = 'origin'
-        else:
-            self.__dict__['_node_type'] = 'node'
-    
-    @property
-    def id(self) -> str:
-        return self._id
-
-    def __getattr__(self, key):
-        if key == 'make':
-            return display_make(self._node['make'])
-        elif key in self._node:
-            return self._node[key]
-        else:
-            raise AttributeError
-    
-    def __setattr__(self, key, val):
-        if key in NodeInfo.private:
-            raise AttributeError
-        else:
-            self.__dict__[key] = val
-
-    def __str__(self):
-        return display_node(self)
-
-    __repr__ = __str__
 
 class TreeIndex:
     private = ('_items')
@@ -173,18 +140,18 @@ class Tree:
 
         return name
 
-    # return NodeInfo object for a given node_id
-    def node(self, node_id: str) -> NodeInfo:
-        path = os.path.join(self.path, 'nodes', node_id)
-        if not os.path.isfile(path):
+    # return Node object for a given node_id
+    def node(self, node_id: str) -> Node:
+        node_path = os.path.join(self.path, 'nodes', node_id)
+        if not os.path.isfile(node_path):
             raise IdLookupError(node_id)
 
-        with open(path, 'r') as f:
+        with open(node_path, 'r') as f:
             node_str = f.read()
         node_hash = hash_node(node_str)
 
-        nodeinfo = NodeInfo(
-            node_id, node_hash,
+        nodeinfo = Node(
+            self.path, node_id, node_hash,
             json.loads(node_str, object_pairs_hook=OrderedDict)
         ) 
         return nodeinfo
@@ -269,28 +236,6 @@ def expand_tree(node, _prefix="", _last=True):
         _last = i == (child_count - 1)
         out += expand_tree(child, _prefix, _last)
     
-    return out
-
-def display_make(make: list, depth: int = 1) -> str:
-    out = '[\n'
-    just = ' ' * (depth * 2)
-    for entry in make:
-        out += "{0}{1}\n".format(just, entry)
-    
-    out += ' ' * ((2 * depth) - 2) + ']'
-    return out
-
-def display_node(nodeinfo: NodeInfo) -> str:
-    just = '  '
-    out = "NODE[{0}]\n{\n".format(nodeinfo.id)
-    out += "{0}origin: {1}\n".format(just, nodeinfo.parent)
-    out += "{0}parent: {1}\n".format(just, nodeinfo.parent)
-    out += "{0}timestamp: {1}\n".format(just, nodeinfo.timestamp)
-    out += "{0}shape: {1}\n".format(just, nodeinfo.shape)
-    out += "{0}make: {1}\n".format(
-        just, display_make(nodeinfo._node['make'], depth=2))
-
-    out += '}'
     return out
 
 
