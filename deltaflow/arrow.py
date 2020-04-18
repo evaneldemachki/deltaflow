@@ -302,6 +302,3 @@ class Arrow:
         return out.format(self.name, self.head.id)
     
     __repr__ = __str__
-
-
-

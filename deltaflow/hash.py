@@ -35,5 +35,3 @@ def hash_pair(node_hash, data_hash):
     node_id.update(data_hash.encode('utf-8'))
     
     return node_id.hexdigest()
-    
-

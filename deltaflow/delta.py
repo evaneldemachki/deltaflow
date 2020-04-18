@@ -111,25 +111,4 @@ def build(stage: 'Stage') -> OrderedDict:
     if diff['extend'][0] is not None or diff['extend'][1] is not None:
         delta['extend'] = ExtensionBlock(diff['extend'][1], diff['extend'][0])
 
-    return delta
-
-
-    
-
-    
-
-    
-
-    
-
-    
-
-
-
-
-
-    
-
-
-
-            
+    return delta         

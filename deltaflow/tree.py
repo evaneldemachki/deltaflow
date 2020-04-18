@@ -168,5 +168,3 @@ def expand_tree(node, _prefix="", _last=True):
         out += expand_tree(child, _prefix, _last)
     
     return out
-
-

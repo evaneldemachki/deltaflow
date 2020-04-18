@@ -94,4 +94,3 @@ class DirectoryMap(ABC):
         return out
     
     __repr__ = __str__
-
