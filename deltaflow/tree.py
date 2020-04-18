@@ -4,7 +4,8 @@ import pandas
 from collections import OrderedDict
 from deltaflow.errors import NameLookupError, IdLookupError
 from deltaflow.hash import hash_node
-from deltaflow.node import Node
+from deltaflow.node import DeltaNode, OriginNode
+from deltaflow.abstract import DirectoryMap
 
 class NodeLink:
     def __init__(self, node_id: str):
@@ -27,107 +28,57 @@ class NodeLink:
     def children_ids(self) -> list:
         return [obj.id for obj in self.children]
 
-class TreeIndex:
-    private = ('_items')
+class ArrowsIndex(DirectoryMap):
+    def __init__(self, path):
+        super().__init__(
+            os.path.join(path, 'arrows'),
+            'arrows'
+        )
 
-    def to_dict(self):
-        return self._items
+    def _parse(self, text: str) -> str:
+        return text
 
-    def __iter__(self):
-        for key in self._items:
-            yield key
+    def _show(self, key: str, obj: object) -> str:
+        return "{0} -> {1}".format(key, obj)
 
-    def __contains__(self, key):
-        return key in self._items
+class NodesIndex(DirectoryMap):
+    def __init__(self, tree):
+        super().__init__(
+            os.path.join(tree.path, 'nodes'),
+            'nodes'
+        )
+        self._tree = tree
+        self._cache = {}
+        self._cache = dict(self.items())
 
-    def __getitem__(self, key):
-        return self._items[key]
+    def _parse(self, text: str) -> dict:
+        return json.loads(text)
 
-    def __setattr__(self, key, val):
-        if key in OriginsInfo.private:
-            raise AttributeError
+    def __getitem__(self, key: str) -> dict:
+        if key in self._cache:
+            return self._cache[key]
         else:
-            self.__dict__[key] = val
-
-class NodesIndex(TreeIndex):
-    def __init__(self, nodes):
-        self.__dict__['_items'] = nodes
+            try:
+                return super().__getitem__(key)
+            except KeyError:
+                raise IdLookupError(key)
     
     def __str__(self):
-        out = 'NODES: {\n'
-        for key in self:
-            out += "  {1}: {1}\n".format(key, self[key])
-        
-        out += "}"
-        return out
-
-class OriginsIndex(TreeIndex):
-    def __init__(self, origins):
-        self.__dict__['_items'] = origins
-
-    def __str__(self):
-        out = 'ORIGINS: {\n'
-        for key in self:
-            out += "  {0}: {1}\n".format(key, self[key])
-        
-        out += "}"
-        return out
-    
-    __repr__ = __str__
-
-class ArrowsIndex(TreeIndex):
-    def __init__(self, arrows):
-        self.__dict__['_items'] = arrows
-
-    def __getattr__(self, key):
-        if key in self._items:
-            return self._items[key]
-        else:
-            raise AttributeError
-
-    def __str__(self):
-        out = 'ARROWS: {\n'
-        for key in self:
-            out += "  {0} -> {1}\n".format(key, self._items[key])
-        
-        out += "}"
-        return out
-    
-    __repr__ = __str__
+        return self._tree.__str__
 
 
 class Tree:
     def __init__(self, path):
-        self.__dict__['path'] = os.path.join(path, '.deltaflow')
+        self.path = os.path.join(path, '.deltaflow')
+        self.arrows = ArrowsIndex(self.path)
+        self.nodes = NodesIndex(self)
 
     @property
     def origins(self):
         with open(os.path.join(self.path, 'origins'), 'r') as f:
             obj = json.load(f)
         
-        return OriginsIndex(obj)
-    
-    @property
-    def arrows(self):
-        path = os.path.join(self.path, 'arrows')
-        arrows_list = os.listdir(path)
-        obj = {}
-        for name in arrows_list:
-            with open(os.path.join(path, name), 'r') as f:
-                obj[name] = f.readline()
-
-        return ArrowsIndex(obj)
-    
-    @property
-    def nodes(self):
-        path = os.path.join(self.path, 'nodes')
-        nodes_list = os.listdir(path)
-        obj = {}
-        for node_id in nodes_list:
-            with open(os.path.join(path, node_id), 'r') as f:
-                obj[node_id] = json.load(f)['parent']
-
-        return NodesIndex(obj)        
+        return obj
 
     # get origin name from given origin id
     def name_origin(self, origin_id: str) -> str:
@@ -141,83 +92,63 @@ class Tree:
         return name
 
     # return Node object for a given node_id
-    def node(self, node_id: str) -> Node:
-        node_path = os.path.join(self.path, 'nodes', node_id)
-        if not os.path.isfile(node_path):
+    def node(self, node_id: str) -> DeltaNode:
+        if node_id not in self.nodes:
             raise IdLookupError(node_id)
-
-        with open(node_path, 'r') as f:
-            node_str = f.read()
-        node_hash = hash_node(node_str)
-
-        nodeinfo = Node(
-            self.path, node_id, node_hash,
-            json.loads(node_str, object_pairs_hook=OrderedDict)
-        ) 
-        return nodeinfo
+        
+        node_dict = self.nodes[node_id]
+        if node_dict['type'] == 'origin':
+            node = OriginNode(self.path, node_id, node_dict)
+        else:
+            node = DeltaNode(self.path, node_id, node_dict)
+            
+        return node
 
     # get arrow node_id pointer by arrow name
     def arrow_head(self, name: str) -> str:
         path = os.path.join(self.path, 'arrows', name)  
         try:
             with open(path, 'r') as f:
-                pointer = f.readline()
+                node_id = f.readline()
         except FileNotFoundError:
             raise NameLookupError('arrow', name)
         
-        return pointer
+        return node_id
     
-    # get timeline of parent node_ids mapped to resp. node_hashes
-    def timeline(self, node_id: str) -> OrderedDict:
-        timeline = list()
+    # return map of node lineage mapped to resp. node hashes
+    def outline(self, node: DeltaNode) -> OrderedDict:
         path = os.path.join(self.path, 'nodes')
-        node_path = os.path.join(path, node_id)
-        try:
-            with open(node_path, 'r') as f:
-                node_str = f.read()
-        except FileNotFoundError:
-            raise IdLookupError(node_id)
+        outline = []
+        node_str = json.dumps(node._node)
+        outline.append((node.id, hash_node(node_str)))
 
-        parent = json.loads(node_str)['parent']
-        timeline.append((node_id, hash_node(node_str)))
-        while parent is not None:
-            node_id = parent
-            node_path = os.path.join(path, node_id)
-            try:
-                with open(node_path, 'r') as f:
-                    node_str = f.read()
-            except FileNotFoundError:
-                raise IdLookupError(node_id)
+        if node.type == 'origin':
+            outline = OrderedDict(outline)
+            return outline
 
-            parent = json.loads(node_str)['parent']
-            timeline.append((node_id, hash_node(node_str)))
+        lineage = [node.id] + node.lineage
+        for node_id in lineage[1:]:
+            node_str = json.dumps(self.nodes[node_id])
+            outline.append((node_id, hash_node(node_str)))
 
-        timeline = OrderedDict(reversed(timeline))
-        return timeline
-    
-    def __setattr__(self, key, val):
-        raise AttributeError
+        outline = OrderedDict(reversed(outline))
+        return outline
 
     def __str__(self):
-        origins = self.origins.to_dict()
+        origins = self.origins
         origin_map = {node_id: name for name, node_id in origins.items()}
 
         node_links = {name: NodeLink(origins[name]) for name in origins}
-        nodes = self.nodes
-        for items in self.arrows.to_dict().items():
-            node_id = items[1]
-            timeline = []
-            parent = node_id
-            while parent is not None:
-                timeline.append(parent)
-                parent = nodes[parent]
-                    
-            origin_name = origin_map[timeline.pop(-1)]
-            timeline = reversed(timeline)
+        for _, node_id in self.arrows.items():
+            node = self.nodes[node_id]
+            if node['type'] == 'delta':
+                lineage = [node_id] + node['lineage']
+                origin_name = origin_map[lineage.pop(-1)]
+                lineage = reversed(lineage)
             
-            node = node_links[origin_name]
-            for child in timeline:
-                node = node.add_child(child)
+                link = node_links[origin_name]
+                for child in lineage:
+                    link = link.add_child(child)
 
         out = ''
         for name in node_links:

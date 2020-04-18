@@ -33,20 +33,32 @@ class IndexerError(Error):
         )
 
 class IntersectionError(Error):
-    """called when empty or non-intersecting indexer is passed"""
-    msg = "{0} indexer does not intersect with stage"
-    def __init__(self, axis):
-        self.msg = self.msg.format(strf_axis[axis])
+    """called when passed index does not intersect with live data"""
+    msg = "index does not intersect with live data index"
+    def __init__(self):
+        self.msg = self.msg
+
+class DifferenceError(Error):
+    """called when passed index is identical to live data"""
+    msg = "index does not differ from live data index"
+    def __init__(self):
+        self.msg = self.msg
         
 class ExtensionError(Error):
     """raised when extension indices do not match stage"""
     msg = "{0} of {1} extension must must match stage"
     strf = {
         0: ('columns', 'row'),
-        1: ('rows', 'columns')
+        1: ('rows', 'column')
     }
     def __init__(self, axis):
         self.msg = self.msg.format(*self.strf[axis])
+
+class PutError(Error):
+    """raised when DataFrame is identical to live data at intersection"""
+    msg = "data is identical to live data at intersection"
+    def __init__(self):
+        self.msg = self.msg
 
 class IntegrityError(Error):
     """raised when delta-node/origin-node hash pair does not match node ID"""

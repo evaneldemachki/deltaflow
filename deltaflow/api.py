@@ -65,7 +65,7 @@ class Field:
         with open(path, 'w') as f:
             f.write(node_str)
 
-        origins = origins.to_dict()
+        origins = origins
         origins[name] = node_id
         with open(os.path.join(self.tree.path, 'origins'), 'w') as f:
             json.dump(origins, f)

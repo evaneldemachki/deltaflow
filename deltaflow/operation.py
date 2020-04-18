@@ -1,186 +1,144 @@
 import pandas
 import numpy
+from typing import Iterable, Union
 
-# return column index for pandas object
-def column_index(obj):
-    if isinstance(obj, pandas.Series):
-        cols = pandas.Index([obj.name])
-    elif isinstance(obj, pandas.DataFrame):
-        cols = pandas.Index(obj.columns)
-    else: raise TypeError
+DataFrame = pandas.DataFrame
+Series = pandas.Series
+Index = pandas.Index
 
-    return cols
+# return effective axis for pandas object
+def effective_axis(obj: Union[DataFrame, Series], axis=int) -> Index:
+    if axis == 0: # row index
+        ix = obj.index
+    else: # column index
+        if isinstance(obj, Series):
+            ix = pandas.Index([obj.name])
+        elif isinstance(obj, DataFrame):
+            ix = obj.columns
+        else:
+            raise TypeError
 
-# return reduced dataframe of modified rows from x to y
-def shrink(x, y):
+    return ix
+
+# return reduced dataframe of difference from x to y
+def shrink(x: DataFrame, y: DataFrame) -> DataFrame:
     diff = y[~y.isin(x)]
     diff = diff.dropna(axis='columns', how='all')
     diff = diff.dropna(axis='rows', how='all')
 
     return diff
 
+# Put non-NA values from y into DataFrame
 class Put:
-    __slots__ = ['id', 'data_x', 'data_y', 'dtypes']
-    def __init__(self, data_x, data_y, dtypes):
+    __slots__ = ['id', 'x', 'y', 'dtypes']
+    def __init__(self, x: DataFrame, y: DataFrame, dtypes: Series):
         self.id = 'put'
-        self.data_x = data_x
-        self.data_y = data_y
+        self.x = x
+        self.y = y
         self.dtypes = dtypes
 
-    def execute(self, data:pandas.DataFrame) -> pandas.DataFrame:
-        data.update(self.data_y)
-        data = data.astype(self.dtypes[self.data_y.columns])
+    def execute(self, data: DataFrame) -> DataFrame:
+        data = data.copy()
+        data.update(self.y)
+        data = data.astype(self.dtypes[self.y.columns])
         return data
     
-    def undo(self, data:pandas.DataFrame) -> pandas.DataFrame:
-        data.update(self.data_x)
-        data = data.astype(self.dtypes[self.data_x.columns])
+    # replace segment y with original segment x
+    def undo(self, data:pandas.DataFrame) -> DataFrame:
+        data.update(self.x)
+        data = data.astype(self.dtypes[self.x.columns])
 
         return data
     
     def __str__(self):
-        total = self.data_y.count().sum()
+        total = self.y.count().sum()
         return "PUT {0} VALUES".format(total)
 
     def __repr__(self):
-        return repr(self.data_y)
+        return repr(self.y)
 
-# Add rows to the end of dataframe
-class ExtendRows:
-    __slots__ = ['id', 'rows']
-    def __init__(self, rows: pandas.DataFrame):
-        self.id = 'ext_rows'
-        self.rows = rows
+# Add rows/columns to the end of DataFrame
+class Extend:
+    __slots__ = ['id', 'data', 'axis']
+    def __init__(self, data: DataFrame, axis: int):
+        self.id = 'extend'
+        self.data = data
+        self.axis = axis
     
-    def execute(self, data: pandas.DataFrame) -> pandas.DataFrame:
-        data = data.append(self.rows)
+    def execute(self, data: DataFrame) -> DataFrame:
+        data = pandas.concat([data, self.data], axis=self.axis)
         return data
     
-    def undo(self, data: pandas.DataFrame) -> pandas.DataFrame:
-        data = data.drop(self.rows.index)
-        return data
-    
-    def __str__(self):
-        size = self.rows.shape[0]
-        return "EXTEND ROWS BY {0}".format(size)
-    
-    def __repr__(self):
-        return repr(self.rows)
-
-# Add column to the end of dataframe
-class ExtendColumns:
-    __slots__ = ['id', 'columns']
-    def __init__(self, columns: pandas.DataFrame):
-        self.id = 'ext_cols'
-        self.columns = columns
-    
-    def execute(self, data: pandas.DataFrame) -> pandas.DataFrame:
-        data = pandas.concat([data, self.columns], axis=1)
-        return data
-    
-    def undo(self, data: pandas.DataFrame) -> pandas.DataFrame:
-        data = data.drop(self.columns.name, axis=1)
+    # drop extension indices from DataFrame
+    def undo(self, data: DataFrame) -> DataFrame:
+        data = data.drop(
+            self.data._get_axis(self.axis), 
+            axis=self.axis
+        )
         return data
 
     def __str__(self):
-        size = self.columns.shape[1]
-        return "EXTEND COLUMNS BY {0}".format(size)
+        size = self.data.shape[self.axis]
+        if self.axis == 0:
+            return "EXTEND ROWS BY {0}".format(size)
+        else:
+            return "EXTEND COLUMNS BY {0}".format(size)
 
     def __repr__(self):
-        return repr(self.columns)
+        return repr(self.data.index)
 
-# Drop rows from dataframe
-class DropRows:
-    __slots__ = ['id', 'rows', 'ref']
-    def __init__(self, rows: pandas.DataFrame, ref: pandas.Int64Index):
-        self.id = 'drop_rows'
-        self.rows = rows
+# Drop rows/columns from DataFrame
+class Drop:
+    __slots__ = ['id', 'data', 'ref', 'axis']
+    def __init__(self, data: DataFrame, ref: Iterable, axis: int):
+        self.id = 'drop'
+        self.data = data
         self.ref = ref
+        self.axis = axis
     
-    def execute(self, data:pandas.DataFrame) -> pandas.DataFrame:
-        data = data.drop(self.rows.index)
+    def execute(self, data: DataFrame) -> DataFrame:
+        data = data.drop(self.data._get_axis(self.axis), self.axis)
         return data
     
-    # *adds rows to original indices
-    def undo(self, data:pandas.DataFrame) -> pandas.DataFrame:
-        data = data.append(self.rows)
-        data = data.loc[ref]
-        return data
-    
-    def __str__(self):
-        size = self.rows.shape[0]
-        return "DROP {0} ROW(S)".format(size)
-    
-    def __repr__(self):
-        return repr(self.rows)
-
-# Drop columns from dataframe
-class DropColumns:
-    __slots__ = ['id', 'columns', 'ref']
-    def __init__(self, columns: pandas.DataFrame, ref: pandas.Index):
-        self.id = 'drop_cols'
-        self.columns = columns
-        self.ref = ref
-    
-    def execute(self, data:pandas.DataFrame) -> pandas.DataFrame:
-        data = data.drop(self.columns.columns, axis=1)
-        return data
-    
-    # *adds dropped columns to original positions
-    def undo(self, data:pandas.DataFrame) -> pandas.DataFrame:
-        data = pandas.concat([data, self.columns], axis=1)
-        data = data[self.ref]
-
+    # add dropped indices back to their original positions
+    def undo(self, data: DataFrame) -> DataFrame:
+        data = pandas.concat([data, self.data], axis=self.axis)
+        data = data.reindex(self.ref, axis=self.axis)
         return data
     
     def __str__(self):
-        size = self.columns.shape[1]
-        return "DROP {0} COLUMN(S)".format(size)
+        size = self.data.shape[self.axis]
+        if self.axis == 0:
+            return "DROP {0} ROW(S)".format(size)
+        else:
+            return "DROP {0} COLUMN(S)".format(size)
     
     def __repr__(self):
-        return repr(self.columns)
+        return repr(self.data)
 
-# Set dataframe index to another index of equal length
-class Reindex:
-    __slots__ = ['id', 'index_x', 'index_y']
-    def __init__(self, index_x, index_y):
-        self.id = 'reindex'
-        self.index_x = index_x
-        self.index_y = index_y
-    
-    def execute(self, data: pandas.DataFrame) -> pandas.DataFrame:
-        data.index = self.index_y
+# Replace DataFrame axis labels with y
+class Relabel:
+    __slots__ = ['id', 'x', 'y', 'axis']
+    def __init__(self, x: Iterable, y: Iterable, axis: int):
+        self.id = 'relabel'
+        self.x = x
+        self.y = y
+        self.axis = axis
+
+    def execute(self, data: DataFrame) -> DataFrame:
+        data = data.set_axis(self.y, axis=self.axis)
         return data
     
-    def undo(self, data: pandas.DataFrame) -> pandas.DataFrame:
-        data.index = self.index_x
+    # set DataFrame axis labels back to x
+    def undo(self, data: DataFrame) -> DataFrame:
+        data = data.set_axis(self.x, axis=self.axis)
         return data
     
     def __str__(self):
-        return "REINDEX ROWS"
+        if self.axis == 0:
+            return "RELABEL ROWS"
+        else:
+            return "RELABEL COLUMNS"
     
     def __repr__(self):
-        return repr(self.index_y)
-
-class RenameColumns:
-    __slots__ = ['id', 'cols_x', 'cols_y']
-    def __init__(self, cols_x, cols_y):
-        self.id = 'rename'
-        self.cols_x = cols_x
-        self.cols_y = cols_y
-    
-    def execute(self, data: pandas.DataFrame) -> pandas.DataFrame:
-        data = data.rename(columns={
-            cx: cy for cx, cy in zip(self.cols_x, self.cols_y)})
-        return data
-    
-    def undo(self, data:pandas.DataFrame) -> pandas.DataFrame:
-        data = data.rename(columns={
-            cy: cx for cx, cy in zip(self.cols_x, self.cols_y)})
-        return data
-
-    def __str__(self):
-        return "RENAME COLUMNS"
-    
-    def __repr__(self):
-        return repr(self.cols_y)
+        return repr(self.y)
