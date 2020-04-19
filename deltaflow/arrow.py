@@ -2,6 +2,7 @@ import os
 import pandas
 from collections import OrderedDict
 from typing import TypeVar, Union, Iterable, Any, Tuple
+import deltaflow
 import deltaflow.fs as fs
 import deltaflow.operation as op
 from deltaflow.hash import hash_data, hash_pair, hash_node
@@ -282,7 +283,10 @@ class Arrow:
         # load origin data and verify hash == origin_hash
         data = fs.load_origin(self._tree.path, origin_name)
         if hash_data(data) != origin_hash:
-            raise IntegrityError(origin_name, 'origin')
+            if deltaflow.get_option('raise_integrity_error'):
+                raise IntegrityError(origin_name, 'origin')
+            else:
+                print('WARNING:', IntegrityError(origin_name, 'origin'))
         # apply deltas in timeline (excluding origin node)
         for node_id in list(outline)[1:]:
             node_hash = outline[node_id]
@@ -293,7 +297,10 @@ class Arrow:
             # assure reconstructed node_id matches true node_id
             data_hash = hash_data(data)
             if hash_pair(node_hash, data_hash) != node_id:
-                raise IntegrityError(node_id, 'delta')
+                if deltaflow.get_option('raise_integrity_error'):
+                    raise IntegrityError(node_id, 'delta')
+                else:
+                    print('WARNING:', IntegrityError(node_id, 'delta'))
 
         return data
     

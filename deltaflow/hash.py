@@ -12,11 +12,10 @@ def colencode(data):
 # Generate SHA1 hash of pandas.DataFrame object
 def hash_data(data):
     data_hash = hashlib.sha1()
-    data_hash.update(data.index.values) # p1: data index
-    data_hash.update(colencode(data)) # p2: data columns
-    data_hash.update( # p3: data content
+    data_hash.update(colencode(data)) # p1: data columns
+    data_hash.update( # p2: data content
         pandas.util.hash_pandas_object(
-            data, index=False).values
+            data, index=True).values
     )
 
     return data_hash.hexdigest()

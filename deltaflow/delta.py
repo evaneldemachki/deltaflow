@@ -34,8 +34,8 @@ def align(stage: 'Stage', diff: OrderedDict) -> OrderedDict:
         base_index[axis] = base_index[axis].drop(index)
         # add to or create diff record for drop index
         if diff['drop'][axis] is not None:
-            diff['drop'][axis] = numpy.concatenate(
-                diff['drop'][axis], index)
+            diff['drop'][axis] = numpy.concatenate([
+                diff['drop'][axis], index])
         else:
             diff['drop'][axis] = index
 

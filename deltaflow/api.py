@@ -11,6 +11,23 @@ from deltaflow.tree import Tree
 from deltaflow.arrow import Arrow
 from deltaflow.node import make_origin
 
+__OPTIONS__ = {'raise_integrity_error': True}
+
+def set_option(option, value):
+    global __OPTIONS__
+    if option in __OPTIONS__:
+        __OPTIONS__[option] = value
+        print("set option '{0}' to {1}".format(option, value))
+    else:
+        raise KeyError("option '{0}' does not exist".format(option))
+
+def get_option(option):
+    global __OPTIONS__
+    if option in __OPTIONS__:
+        return __OPTIONS__[option]
+    else:
+        raise KeyError("option '{0}' does not exist".format(option))
+
 # Initialize a field directory in given path
 def touch(path: str = os.getcwd()) -> None:
     core_path = os.path.join(path, '.deltaflow')
