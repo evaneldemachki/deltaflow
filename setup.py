@@ -27,7 +27,7 @@ setuptools.setup(
         'requests==2.23.0',
         'six==1.14.0',
         'thrift==0.13.0',
-        'urllib3==1.25.8'
+        'urllib3==1.26.5'
     ],
     packages=setuptools.find_packages(),
     python_requires='>=3.6'
