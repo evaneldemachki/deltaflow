@@ -19,7 +19,7 @@ setuptools.setup(
         'idna==2.9',
         'llvmlite==0.31.0',
         'numba==0.48.0',
-        'numpy==1.18.1',
+        'numpy==1.22.0',
         'pandas==1.0.1',
         'psutil==5.6.7',
         'python-dateutil==2.8.1',
