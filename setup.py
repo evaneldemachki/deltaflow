@@ -11,7 +11,7 @@ setuptools.setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     install_requires=[
-        'certifi==2019.11.28',
+        'certifi==2022.12.7',
         'chardet==3.0.4',
         'dnspython==1.16.0',
         'fastparquet==0.3.3',
